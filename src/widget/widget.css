@@ -21,9 +21,14 @@ button:disabled { cursor: default; }
 button:focus-visible { outline: 2px solid var(--acc-deep); outline-offset: 2px; }
 .row, .key-button { display: flex; align-items: center; }
 .keys { align-items: center; }
-.shell { width: 100%; overflow: hidden; background: var(--surface); border: 1px solid #181d240e; border-radius: 28px; box-shadow: 0 4px 9px -4px #20232b2b, 0 1px 2px #20232b10; pointer-events: auto; }
-.shell:has(.panel, .update-notice) { border-radius: 26px; }
-.bar { height: 54px; position: relative; }
+.shell {
+  --panel-motion: 200ms cubic-bezier(.22, .61, .36, 1);
+  width: 100%; overflow: hidden; background: var(--surface); border: 1px solid #181d240e; border-radius: 28px;
+  box-shadow: 0 4px 9px -4px #20232b2b, 0 1px 2px #20232b10; pointer-events: auto;
+  transition: border-radius var(--panel-motion);
+}
+.shell:has(.panel-transition:not([inert]) > :is(.panel, .update-notice)) { border-radius: 26px; }
+.bar { --acc-deep: color-mix(in srgb, var(--accent) 72%, black); height: 54px; position: relative; }
 .tools { position: absolute; inset: 0 52px 0 12px; display: grid; grid-template-columns: 37px minmax(30px, 1fr) 36px 36px; align-items: center; gap: 7px; }
 .tools > .bot-avatar { width: 35px; height: 35px; }
 .tools > .bot-avatar::after { content: none; }
@@ -32,11 +37,18 @@ button:focus-visible { outline: 2px solid var(--acc-deep); outline-offset: 2px; 
 .tool, .power { display: grid; place-items: center; border: 0; border-radius: 50%; padding: 0; touch-action: manipulation; }
 .tool { width: 36px; height: 36px; color: #64676d; background: #f1f2f3; }
 .tool:hover { color: var(--ink); background: #e9eaec; }
-.tool[aria-expanded="true"] { color: #a42235; background: var(--tint); }
-.power { width: 42px; height: 42px; position: absolute; right: 6px; top: 6px; color: white; background: var(--accent); }
-.power:hover:enabled { background: #cd2b40; }
+.tool[aria-expanded="true"] { color: var(--acc-deep); background: var(--tint); }
+.power { width: 42px; height: 42px; position: absolute; right: 6px; top: 6px; color: var(--power-ink); background: var(--accent); }
+.power:hover:enabled { background: color-mix(in srgb, var(--accent) 92%, black); }
 .power:disabled { opacity: .65; }
 .power:active:enabled, .tool:active { transform: scale(.96); }
+.panel-transition {
+  height: auto;
+  overflow: clip;
+  interpolate-size: allow-keywords;
+  transition: height var(--panel-motion), opacity var(--panel-motion);
+}
+.panel-transition[inert] { height: 0; opacity: 0; }
 .panel { padding: 14px 18px 16px; background: white; border-top: 1px solid var(--line); max-height: 350px; overflow: auto; }
 .row { gap: 8px; justify-content: space-between; }
 .row > strong { font-size: 13px; font-weight: 600; }
@@ -77,16 +89,23 @@ kbd { display: inline-flex; align-items: center; justify-content: center; border
 .update-notice span { flex: 1; overflow-wrap: anywhere; }
 .update-notice .dismiss-update { display: grid; place-items: center; padding: 5px; background: transparent; }
 .transcript { padding-bottom: 18px; }
-.transcript-heading > span { font-size: 11px; color: #8e2938; }
 .words { max-height: 136px; overflow: auto; margin-top: 9px; font-size: 14px; line-height: 1.65; overflow-wrap: anywhere; }
 .words p { margin: 0; }
 .words p + p { margin-top: 4px; }
 .words .draft { color: #98636d; }
-.words .empty { color: var(--muted); padding: 5px 0; }
+.words .empty { color: var(--muted); font-size: 13px; padding: 5px 0; }
 .recover { display: flex; gap: 8px; margin-top: 12px; }
 .recover button { border: 1px solid var(--line); padding: 5px 9px; border-radius: 7px; background: white; font-size: 12px; }
 .recover button:first-child { color: var(--acc-deep); background: var(--tint); border-color: transparent; }
 @media (prefers-reduced-motion: no-preference) {
+  .tools > .bot-avatar[data-kind="character"] .bot-avatar-eyes {
+    translate: calc(var(--gaze-x, 0) * 9px) calc(var(--gaze-y, 0) * 7px);
+    transition: translate 110ms ease-out;
+  }
+  .tools > .bot-avatar[data-kind="character"] .bot-avatar-interaction {
+    rotate: calc(var(--gaze-x, 0) * 4deg);
+    transition: rotate 150ms ease-out;
+  }
   .shell[data-phase="recording"] .bot-avatar[data-motion-resting="true"][data-motion-paused="false"] :is(.bot-avatar-body, .bot-avatar-eyes, .bot-avatar-eye) { animation-play-state: running; }
 }
 @media (prefers-reduced-motion: reduce) {

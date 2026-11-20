@@ -29,7 +29,6 @@ export const BotAvatar = memo(function BotAvatar({ avatar, small = false, activi
   const previousCompletion = useRef(completion), [done, setDone] = useState(false);
   const live = activity !== undefined;
   const looping = !!activity && ['thinking', 'searching', 'working', 'sending', 'replying', 'waiting_bot'].includes(activity);
-  useBotAvatarMotion(ref, live);
   useEffect(() => {
     const changed = previousCompletion.current !== completion;
     previousCompletion.current = completion;
@@ -41,6 +40,7 @@ export const BotAvatar = memo(function BotAvatar({ avatar, small = false, activi
   const rhythm = [...motionId].reduce((hash, char) => (hash * 31 + char.charCodeAt(0)) >>> 0, 0);
   const id = useId(), choice = botAvatarChoice(avatar), color = botAvatarColors.find(item => item.id === choice.color)!;
   const shape = choice.kind === 'character' ? characterArt.find(item => item.id === choice.figure)! : undefined;
+  useBotAvatarMotion(ref, live, shape?.eye[1]);
   const mark = choice.kind === 'graphic' ? graphicArt.find(item => item.id === choice.figure)! : undefined;
   const eye = shape?.eye[0] === 'small' ? { gap: 18, width: 9, height: 18 } : { gap: 22, width: 10.5, height: 21 };
   const paint = `url(#${id}-paint)`;

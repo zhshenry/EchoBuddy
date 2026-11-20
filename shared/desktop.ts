@@ -28,6 +28,8 @@ export interface DesktopSnapshot {
   update: UpdateStatus;
 }
 
+export type OverlayPointer = { x: number; y: number } | null;
+
 export interface DesktopBridge {
   snapshot(): Promise<DesktopSnapshot>;
   toggle(): Promise<void>;
@@ -47,6 +49,7 @@ export interface DesktopBridge {
   onDictation(handle: (state: DictationState) => void): () => void;
   onPreferences(handle: (state: Preferences) => void): () => void;
   onUpdate(handle: (state: UpdateStatus) => void): () => void;
+  onOverlayPointer(handle: (point: OverlayPointer) => void): () => void;
   onShortcutCancelled(handle: () => void): () => void;
 }
 

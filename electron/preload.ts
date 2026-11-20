@@ -26,6 +26,14 @@ const bridge: DesktopBridge = {
   onDictation: callback => listen('dictation:state', callback),
   onPreferences: callback => listen('preferences:state', callback),
   onUpdate: callback => listen('update:state', callback),
+  onOverlayPointer: callback => {
+    const unsubscribe = listen('overlay:pointer', callback);
+    void ipcRenderer.invoke('overlay:track-pointer', true).catch(() => {});
+    return () => {
+      unsubscribe();
+      if (!ipcRenderer.listenerCount('overlay:pointer')) void ipcRenderer.invoke('overlay:track-pointer', false).catch(() => {});
+    };
+  },
   onShortcutCancelled: callback => listen('preferences:shortcut-cancelled', callback),
 };
 contextBridge.exposeInMainWorld('echoBuddy', bridge);

@@ -29,7 +29,7 @@ const native = spawnSync(join(compiler, 'cl.exe'), [
   '/nologo', '/O2', '/EHsc', '/MT', '/W4', '/std:c++17', '/utf-8',
   '/DUNICODE', '/D_UNICODE', `/Fo${join(nativeOut, 'echo-input.obj')}`,
   `/Fe${join(nativeOut, 'echo-input.exe')}`, join(root, 'native/windows-input/main.cpp'),
-  '/link', 'User32.lib', 'Ole32.lib', 'OleAut32.lib', 'UIAutomationCore.lib', 'Uuid.lib',
+  '/link', 'User32.lib', 'Gdi32.lib', 'Ole32.lib', 'OleAut32.lib', 'UIAutomationCore.lib', 'Uuid.lib',
 ], {
   cwd: root, stdio: 'inherit', windowsHide: true,
   env: {

@@ -1,6 +1,7 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { ChatCircleDots, GearSix, Microphone, PencilSimple, Stop, X } from '@phosphor-icons/react';
+import { botAvatarChoice, botAvatarColors } from '../shared/bot-avatar';
 import type { DesktopSnapshot } from '../shared/desktop';
 import { BotAvatar } from './avatars/BotAvatar';
 import { useCapture } from './audio/useCapture';
@@ -23,6 +24,10 @@ function combination(event: KeyboardEvent): string {
   if (!/^(?:[A-Z0-9]|F(?:[1-9]|1[0-2])|Space)$/.test(key)) return '';
   if (!(event.ctrlKey || event.altKey || event.shiftKey || event.metaKey || /^F\d/.test(key))) return '';
   return [event.ctrlKey && 'Ctrl', event.altKey && 'Alt', event.shiftKey && 'Shift', event.metaKey && 'Win', key].filter(Boolean).join('+');
+}
+
+function PanelTransition({ open, id, children }: { open: boolean; id?: string; children: ReactNode }) {
+  return <div className="panel-transition" id={id} inert={!open}>{children}</div>;
 }
 
 function App() {
@@ -63,7 +68,7 @@ function App() {
     if (reveal && pending) setPane('transcript');
   }, [reveal, pending]);
   useEffect(() => {
-    if (liveText.current) liveText.current.scrollTop = liveText.current.scrollHeight;
+    if (pane === 'transcript' && liveText.current) liveText.current.scrollTop = liveText.current.scrollHeight;
   }, [pane, lines, draft]);
   useEffect(() => {
     if (!message || pending) return;
@@ -106,8 +111,13 @@ function App() {
 
   const label = phase === 'preparing' ? '取消准备' : recording ? '结束录音并写入' : phase === 'finishing' ? '正在转写'
     : pending ? '查看待写入文字' : '开始听写';
+  const { color } = botAvatarChoice(preferences.avatar);
+  const palette = botAvatarColors.find(item => item.id === color)!;
   return <section className="shell" ref={shell} aria-label="EchoBuddy 听写浮窗" data-phase={phase}>
-    <div className="bar">
+    <div className="bar" style={{
+      '--accent': palette.lo, '--tint': palette.soft,
+      '--power-ink': color === 'yellow' ? palette.deep : 'white',
+    } as CSSProperties}>
       <div className="tools">
         <BotAvatar avatar={preferences.avatar} motionId="echobuddy-dictation"
           activity={recording ? 'working' : busy ? 'thinking' : 'idle'} />
@@ -116,9 +126,9 @@ function App() {
             height: (recording ? 3 + Math.min(1, value ** 0.65) * 24 : 3) + 'px', opacity: 0.35 + i / 40,
           }} />)}
         </div>
-        <button type="button" className="tool" aria-label="设置" title="设置" aria-expanded={pane === 'settings'}
+        <button type="button" className="tool" aria-label="设置" title="设置" aria-expanded={pane === 'settings'} aria-controls="settings-panel"
           onClick={() => togglePane('settings')}><GearSix size={21} /></button>
-        <button type="button" className="tool" aria-label="转写气泡" title="显示或收起转写" aria-expanded={pane === 'transcript'}
+        <button type="button" className="tool" aria-label="转写气泡" title="显示或收起转写" aria-expanded={pane === 'transcript'} aria-controls="transcript-panel"
           onClick={() => togglePane('transcript')}><ChatCircleDots size={22} /></button>
       </div>
       <button type="button" className="power" disabled={phase === 'finishing' || binding} aria-label={label}
@@ -126,35 +136,43 @@ function App() {
         {canStop ? <Stop size={19} weight="fill" /> : <Microphone size={22} weight="bold" />}
       </button>
     </div>
-    {pane === 'settings' && <div className="panel settings">
-      <div className="row">
-        <strong>听写快捷键</strong>
-        <button className="key-button" aria-label="修改快捷键" aria-pressed={binding} disabled={busy} onClick={() => void editShortcut()}>
-          {binding ? '按下新组合键' : <span className="keys">{preferences.shortcut.split('+').map(key => <kbd key={key}>{key}</kbd>)}</span>}
-          <PencilSimple size={14} />
-        </button>
+    <PanelTransition id="settings-panel" open={pane === 'settings'}>
+      <div className="panel settings">
+        <div className="row">
+          <strong>听写快捷键</strong>
+          <button className="key-button" aria-label="修改快捷键" aria-pressed={binding} disabled={busy} onClick={() => void editShortcut()}>
+            {binding ? '按下新组合键' : <span className="keys">{preferences.shortcut.split('+').map(key => <kbd key={key}>{key}</kbd>)}</span>}
+            <PencilSimple size={14} />
+          </button>
+        </div>
+        {(bindingError || (!binding && !preferences.shortcutActive)) &&
+          <p className="shortcut-error" role="status">{bindingError || '快捷键已被占用，请换一组。'}</p>}
+        <AvatarPicker avatar={preferences.avatar} />
+        <UpdateSettings update={update} blocked={updateBlocked} />
       </div>
-      {(bindingError || (!binding && !preferences.shortcutActive)) &&
-        <p className="shortcut-error" role="status">{bindingError || '快捷键已被占用，请换一组。'}</p>}
-      <AvatarPicker avatar={preferences.avatar} />
-      <UpdateSettings update={update} blocked={updateBlocked} />
-    </div>}
-    {pane === 'transcript' && <div className="panel transcript">
-      <div className="row transcript-heading"><strong>本次转写</strong><span>{pending ? '待写入' : phaseText[phase]}</span></div>
-      <div className="words" ref={liveText} role="log" aria-live="polite">
-        {pending ? <p>{pending}</p> : <>{lines.map((line, i) => <p key={i}>{line}</p>)}{draft && <p className="draft">{draft}</p>}</>}
-        {!pending && !lines.length && !draft && <p className="empty">{busy ? '等待语音…' : '暂无转写内容'}</p>}
+    </PanelTransition>
+    <PanelTransition id="transcript-panel" open={pane === 'transcript'}>
+      <div className="panel transcript">
+        <div className="row"><strong>本次转写</strong></div>
+        <div className="words" ref={liveText} role="log" aria-live="polite">
+          {pending ? <p>{pending}</p> : <>{lines.map((line, i) => <p key={i}>{line}</p>)}{draft && <p className="draft">{draft}</p>}</>}
+          {!pending && !lines.length && !draft && <p className="empty">{busy ? '等待语音…' : '暂无转写内容'}</p>}
+        </div>
+        {pending && <div className="recover">
+          <button onClick={() => void desktop.insertPending()}>写入当前光标</button>
+          <button onClick={() => void desktop.copyPending()}>复制文字</button>
+        </div>}
       </div>
-      {pending && <div className="recover">
-        <button onClick={() => void desktop.insertPending()}>写入当前光标</button>
-        <button onClick={() => void desktop.copyPending()}>复制文字</button>
-      </div>}
-    </div>}
-    {pane !== 'settings' && !busy && message && <div className="message" role="status">
-      <span>{message}</span><button aria-label="收起听写提示" onClick={() => void desktop.clearMessage()}><X size={14} /></button>
-    </div>}
-    {pane === null && !updateBlocked && !message && update.phase === 'ready' && dismissed !== update.version &&
-      <UpdateNotice version={update.version} open={() => setPane('settings')} dismiss={() => setDismissed(update.version)} />}
+    </PanelTransition>
+    {!busy && message && <PanelTransition open={pane !== 'settings'}>
+      <div className="message" role="status">
+        <span>{message}</span><button aria-label="收起听写提示" onClick={() => void desktop.clearMessage()}><X size={14} /></button>
+      </div>
+    </PanelTransition>}
+    {!updateBlocked && !message && update.phase === 'ready' && dismissed !== update.version &&
+      <PanelTransition open={pane === null}>
+        <UpdateNotice version={update.version} open={() => setPane('settings')} dismiss={() => setDismissed(update.version)} />
+      </PanelTransition>}
   </section>;
 }
 

@@ -1,4 +1,5 @@
 import { useEffect, type RefObject } from 'react';
+import type { OverlayPointer } from '../../shared/desktop';
 
 // One activity clock for the live rail; static transcript/profile avatars never subscribe.
 const nodes = new Set<HTMLElement>(), visible = new WeakSet<HTMLElement>();
@@ -46,7 +47,7 @@ function watch(node: HTMLElement) {
   };
 }
 
-export function useBotAvatarMotion(ref: RefObject<HTMLSpanElement | null>, live: boolean) {
+export function useBotAvatarMotion(ref: RefObject<HTMLSpanElement | null>, live: boolean, eyeY: number | undefined) {
   useEffect(() => {
     const node = ref.current;
     if (!live || !node) return;
@@ -85,4 +86,39 @@ export function useBotAvatarMotion(ref: RefObject<HTMLSpanElement | null>, live:
       delete node.dataset.poked; delete node.dataset.motionPaused; delete node.dataset.motionResting;
     };
   }, [ref, live]);
+
+  useEffect(() => {
+    if (!live || eyeY === undefined) return;
+    const node = ref.current, shell = node?.closest('.shell');
+    if (!node || !shell) return;
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const look = (point: OverlayPointer) => {
+      if (!point || !shell.contains(document.elementFromPoint(point.x, point.y))) {
+        node.style.removeProperty('--gaze-x');
+        node.style.removeProperty('--gaze-y');
+        return;
+      }
+      const bounds = node.getBoundingClientRect();
+      const dx = point.x - (bounds.left + bounds.width / 2);
+      const dy = point.y - (bounds.top + bounds.height * eyeY / 100);
+      const distance = Math.max(bounds.width * .65, Math.hypot(dx, dy), 1);
+      node.style.setProperty('--gaze-x', (dx / distance).toFixed(3));
+      node.style.setProperty('--gaze-y', (dy / distance).toFixed(3));
+    };
+    let unsubscribe: (() => void) | undefined;
+    const syncTracking = () => {
+      unsubscribe?.();
+      look(null);
+      unsubscribe = !document.hidden && !reduced.matches ? window.echoBuddy.onOverlayPointer(look) : undefined;
+    };
+    syncTracking();
+    document.addEventListener('visibilitychange', syncTracking);
+    reduced.addEventListener('change', syncTracking);
+    return () => {
+      unsubscribe?.();
+      document.removeEventListener('visibilitychange', syncTracking);
+      reduced.removeEventListener('change', syncTracking);
+      look(null);
+    };
+  }, [ref, live, eyeY]);
 }

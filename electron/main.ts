@@ -42,7 +42,7 @@ async function start() {
     return net.fetch(pathToFileURL(file).href);
   });
 
-  const { window, resize } = createOverlay(join(__dirname, 'preload.cjs'), join(appPath, 'assets/icon.ico'), saved.position, position => {
+  const { window, resize, trackPointer } = createOverlay(join(__dirname, 'preload.cjs'), join(appPath, 'assets/icon.ico'), saved.position, position => {
     saved.position = position;
     persist();
   });
@@ -75,7 +75,7 @@ async function start() {
   function toggle() {
     if (editing || updates.isInstalling()) return;
     if (!window.isVisible()) window.showInactive();
-    dictation.toggle();
+    dictation.toggle(shortcutActive ? saved.shortcut : undefined);
   }
   function finishShortcut(value?: string): string | null {
     if (!editing) return null;
@@ -118,6 +118,7 @@ async function start() {
   handle('dictation:copy', () => dictation.copyPending());
   handle('dictation:clear-message', () => dictation.clearMessage());
   handle('overlay:resize', resize);
+  handle('overlay:track-pointer', (enabled: boolean) => trackPointer(enabled === true));
   handle('preferences:avatar', (avatar: string) => {
     if (!isBotAvatar(avatar)) return false;
     saved.avatar = avatar;

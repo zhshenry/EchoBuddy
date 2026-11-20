@@ -20,7 +20,7 @@ export class Dictation {
   snapshot(): DictationState { return this.state; }
   blocksInstall(): boolean { return this.state.phase !== 'idle' || this.writing || !!this.state.pending; }
 
-  toggle(): void {
+  toggle(shortcut?: string): void {
     if (this.state.phase === 'finishing' || this.writing) return;
     if (this.session) {
       this.set({ phase: 'finishing' });
@@ -31,7 +31,7 @@ export class Dictation {
       return;
     }
     const id = randomUUID();
-    this.session = { id, target: this.input.capture().catch(() => false), completing: false };
+    this.session = { id, target: this.input.capture(shortcut).catch(() => false), completing: false };
     this.engine.begin(id);
     this.set({ sessionId: id, phase: 'preparing', message: '' });
   }

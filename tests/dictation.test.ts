@@ -6,7 +6,7 @@ import { Dictation } from '../electron/dictation';
 import { AppUpdates } from '../electron/updater';
 import type { WriteResult } from '../electron/windows-input';
 
-function setup(capture: () => Promise<boolean> = async () => true) {
+function setup(capture: (shortcut?: string) => Promise<boolean> = async () => true) {
   const writes: [string, boolean][] = [], clipboard: string[] = [], calls: string[] = [];
   let answer: WriteResult = 'written';
   const controller = new Dictation(
@@ -19,8 +19,13 @@ function setup(capture: () => Promise<boolean> = async () => true) {
 
 test('starting audio does not wait for either the original caret or the speech worker', async () => {
   let targetReady!: (found: boolean) => void;
-  const { controller, writes, calls } = setup(() => new Promise(resolve => { targetReady = resolve; }));
-  controller.toggle();
+  let capturedShortcut: string | undefined;
+  const { controller, writes, calls } = setup(shortcut => new Promise(resolve => {
+    capturedShortcut = shortcut;
+    targetReady = resolve;
+  }));
+  controller.toggle('Ctrl+D');
+  assert.equal(capturedShortcut, 'Ctrl+D');
   const id = controller.snapshot().sessionId!;
   assert.equal(controller.snapshot().phase, 'preparing');
   assert.deepEqual(calls, [id]);
