@@ -1,0 +1,67 @@
+{
+  "name": "echobuddy",
+  "productName": "EchoBuddy",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Windows 离线桌面听写",
+  "author": "zhshenry",
+  "homepage": "https://github.com/zhshenry/EchoBuddy",
+  "type": "module",
+  "main": "dist-electron/main.cjs",
+  "engines": { "node": ">=24" },
+  "scripts": {
+    "dev": "npm run prepare:speech && npm run build && electron .",
+    "prepare:speech": "node tooling/speech-assets.mjs",
+    "build": "vite build && node tooling/build.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test tests/*.test.ts",
+    "dist:installer": "npm run prepare:speech && npm run typecheck && npm run test && npm run build && node tooling/installer.mjs"
+  },
+  "dependencies": {
+    "electron-updater": "6.8.9",
+    "sherpa-onnx-node": "1.13.8"
+  },
+  "devDependencies": {
+    "@phosphor-icons/react": "2.1.10",
+    "@types/node": "24.13.6",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "5.2.0",
+    "electron": "44.4.4",
+    "electron-builder": "26.15.3",
+    "esbuild": "0.28.2",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "tsx": "4.23.13",
+    "typescript": "5.9.3",
+    "vite": "8.3.0"
+  },
+  "build": {
+    "appId": "com.zhshenry.echobuddy",
+    "directories": { "output": "release/build" },
+    "artifactName": "EchoBuddy-Setup-${version}-${arch}.${ext}",
+    "publish": { "provider": "github", "owner": "zhshenry", "repo": "EchoBuddy" },
+    "files": ["dist/**", "dist-electron/**", "assets/icon.ico", "assets/tray.png", "package.json"],
+    "extraResources": [
+      { "from": "vendor/speech", "to": "speech" },
+      { "from": "dist-native/echo-input.exe", "to": "echo-input.exe" }
+    ],
+    "asar": false,
+    "npmRebuild": false,
+    "win": {
+      "target": [{ "target": "nsis", "arch": ["x64"] }],
+      "signExecutable": false,
+      "icon": "assets/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon": "assets/icon.ico",
+      "uninstallerIcon": "assets/icon.ico",
+      "installerHeader": "assets/installer-header.bmp",
+      "installerSidebar": "assets/installer-sidebar.bmp",
+      "deleteAppDataOnUninstall": false
+    }
+  }
+}

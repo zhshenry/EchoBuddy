@@ -1,0 +1,129 @@
+import { encodeSpeechWave } from '../../shared/speech-audio';
+import { SPEECH_SAMPLE_RATE as rate } from '../../shared/speech-contracts';
+
+type Events = {
+  level(value: number): void;
+  words(lines: string[], draft: string): void;
+  ended(): void;
+};
+
+export class Capture {
+  private context?: AudioContext;
+  private stream?: MediaStream;
+  private source?: MediaStreamAudioSourceNode;
+  private worklet?: AudioWorkletNode;
+  private flush?: () => void;
+  private closed = false;
+  private frames: Float32Array[] = [];
+  private length = 0;
+  private silence = 0;
+  private hasVoice = false;
+  private segment = 0;
+  private lastDraft = 0;
+  private draftInFlight = false;
+  private finalPasses = Promise.resolve();
+  private error?: unknown;
+  private lines: string[] = [];
+  private draft = '';
+
+  constructor(private readonly id: string, private readonly events: Events) {}
+
+  async start(): Promise<void> {
+    const ctx = this.context = new AudioContext({ sampleRate: rate });
+    await Promise.all([ctx.resume(), ctx.audioWorklet.addModule(new URL('./voice-frames.js', window.location.href))]);
+    if (this.closed) return;
+
+    const worklet = this.worklet = new AudioWorkletNode(ctx, 'voice-frames');
+    worklet.port.onmessage = ({ data }) => {
+      if (data === 'end') this.flush?.();
+      else this.accept(data);
+    };
+    const mute = ctx.createGain();
+    mute.gain.value = 0;
+    worklet.connect(mute).connect(ctx.destination);
+    // Have the capture graph ready when the microphone starts delivering samples.
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
+      video: false,
+    });
+    if (this.closed) { stream.getTracks().forEach(track => track.stop()); return; }
+    this.stream = stream;
+    for (const track of stream.getAudioTracks()) track.onended = this.events.ended;
+    this.source = ctx.createMediaStreamSource(stream);
+    this.source.connect(worklet);
+  }
+
+  confirmed(): string[] { return [...this.lines]; }
+
+  async stop(): Promise<string[]> {
+    this.closed = true;
+    this.source?.disconnect();
+    this.stream?.getTracks().forEach(track => { track.onended = null; track.stop(); });
+    if (this.worklet && this.context?.state === 'running') {
+      await new Promise<void>(resolve => {
+        const timer = window.setTimeout(resolve, 200);
+        this.flush = () => { window.clearTimeout(timer); resolve(); };
+        this.worklet!.port.postMessage('end');
+      });
+      this.worklet.port.onmessage = null;
+    }
+    this.worklet?.disconnect();
+    if (this.context && this.context.state !== 'closed') await this.context.close();
+    this.commit();
+    await this.finalPasses;
+    this.events.level(0);
+    if (this.error) throw this.error;
+    return this.confirmed();
+  }
+
+  private async recognize(frames: Float32Array[], length: number): Promise<string> {
+    const pcm = new Float32Array(length);
+    let offset = 0;
+    for (const frame of frames) { pcm.set(frame, offset); offset += frame.length; }
+    return (await window.echoBuddy.transcribe(this.id, encodeSpeechWave(pcm))).trim();
+  }
+
+  private accept(frame: Float32Array) {
+    let energy = 0;
+    for (const sample of frame) energy += sample * sample;
+    const rms = Math.sqrt(energy / frame.length);
+    this.events.level(Math.min(1, rms * 6));
+    this.frames.push(frame);
+    this.length += frame.length;
+    if (rms > 0.009) { this.hasVoice = true; this.silence = 0; }
+    else this.silence += frame.length;
+
+    if ((this.hasVoice && this.silence >= rate * 0.64) || this.length >= rate * 14) {
+      this.commit();
+      return;
+    }
+    if (!this.closed && this.hasVoice && !this.draftInFlight && this.length - this.lastDraft >= rate * 1.65) {
+      this.lastDraft = this.length;
+      const segment = this.segment;
+      this.draftInFlight = true;
+      void this.recognize(this.frames, this.length).then(text => {
+        if (!this.closed && segment === this.segment && text) {
+          this.draft = text;
+          this.events.words(this.confirmed(), text);
+        }
+      }).catch(() => {
+        // Final passes still receive the full segment.
+      }).finally(() => { this.draftInFlight = false; });
+    }
+  }
+
+  private commit() {
+    const frames = this.frames, length = this.length;
+    this.frames = [];
+    this.length = this.silence = this.lastDraft = 0;
+    this.hasVoice = false;
+    this.segment++;
+    this.draft = '';
+    if (length < 512) return;
+    this.finalPasses = this.finalPasses.then(async () => {
+      const text = await this.recognize(frames, length);
+      if (text) this.lines.push(text);
+      this.events.words(this.confirmed(), this.draft);
+    }).catch(error => { this.error = error; });
+  }
+}
