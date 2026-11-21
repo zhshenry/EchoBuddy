@@ -1,12 +1,13 @@
 import { randomUUID } from 'node:crypto';
-import { SHORT_DICTATION_MAX_SECONDS, type DictationState } from '../shared/desktop';
+import { SHORT_DICTATION_MAX_SECONDS, type DictationState, type WriteTiming } from '../shared/desktop';
 import type { SpeechEngine } from './speech/engine';
 import type { WindowsInput, WriteResult } from './windows-input';
 
-type Session = { id: string; target: Promise<boolean>; completing: boolean; stopTimer?: NodeJS.Timeout };
+type Streaming = { written: string; writes: Promise<void>; failure?: Exclude<WriteResult, 'written'> };
+type Session = { id: string; target: Promise<boolean>; completing: boolean; stopTimer?: NodeJS.Timeout; stream?: Streaming };
 
 export class Dictation {
-  private state: DictationState = { phase: 'idle', sessionId: null, pending: '', message: '', reveal: 0 };
+  private state: DictationState = { phase: 'idle', sessionId: null, recordingStartedAt: null, pending: '', message: '', reveal: 0 };
   private session?: Session;
   private writing = false;
 
@@ -20,21 +21,21 @@ export class Dictation {
   snapshot(): DictationState { return this.state; }
   blocksInstall(): boolean { return this.state.phase !== 'idle' || this.writing || !!this.state.pending; }
 
-  toggle(shortcut?: string): void {
+  toggle(shortcut?: string, timing: WriteTiming = 'sentence'): void {
     if (this.state.phase === 'finishing' || this.writing) return;
     if (this.session) {
       clearTimeout(this.session.stopTimer);
       this.set({ phase: 'finishing' });
       return;
     }
-    if (this.state.pending) {
-      this.set({ reveal: this.state.reveal + 1 });
-      return;
-    }
     const id = randomUUID();
-    this.session = { id, target: this.input.capture(shortcut).catch(() => false), completing: false };
+    const streaming = timing === 'streaming';
+    this.session = {
+      id, target: this.input.capture(shortcut, streaming).catch(() => false), completing: false,
+      stream: streaming ? { written: '', writes: Promise.resolve() } : undefined,
+    };
     this.engine.begin(id);
-    this.set({ sessionId: id, phase: 'preparing', message: '' });
+    this.set({ sessionId: id, phase: 'preparing', pending: '', message: '' });
   }
 
   recording(id: string): void {
@@ -44,12 +45,31 @@ export class Dictation {
       if (this.session === session) this.toggle();
     }, SHORT_DICTATION_MAX_SECONDS * 1000);
     session.stopTimer.unref();
-    this.set({ phase: 'recording' });
+    this.set({ phase: 'recording', recordingStartedAt: Date.now() });
   }
 
   transcribe(id: string, audio: Uint8Array): Promise<string> {
     if (id !== this.session?.id || this.session.completing) return Promise.reject(new Error('本次听写已结束。'));
     return this.engine.transcribe(id, audio);
+  }
+
+  writeProgress(id: string, text: string): Promise<void> | undefined {
+    const session = this.session;
+    const stream = session?.stream;
+    if (session?.id !== id || !stream || this.state.phase !== 'recording') return;
+    stream.writes = stream.writes.then(async () => {
+      if (this.state.phase !== 'recording' || stream.failure || !text.startsWith(stream.written)) return;
+      const remainder = text.slice(stream.written.length);
+      if (!remainder) return;
+      const target = await session.target;
+      if (this.state.phase !== 'recording') return;
+      try {
+        const result = target ? await this.input.insert(remainder, true) : 'moved';
+        if (result === 'written') stream.written = text;
+        else stream.failure = result;
+      } catch { stream.failure = 'unavailable'; }
+    });
+    return stream.writes;
   }
 
   async complete(id: string, transcript: string, error = ''): Promise<void> {
@@ -61,11 +81,25 @@ export class Dictation {
     const text = transcript.trim();
     let pending = '', message = error;
     try {
-      if (error) pending = text;
+      const stream = session.stream;
+      if (stream) await stream.writes;
+      const written = stream?.written ?? '';
+      const aligned = text.startsWith(written);
+      const remainder = aligned ? text.slice(written.length) : text;
+      if (stream?.failure === 'partial') {
+        pending = text;
+        message = this.writeMessage('partial', true);
+      } else if (error) pending = remainder;
       else if (!text) message = '这次没有识别到语音。';
-      else {
-        const result = await session.target ? await this.input.insert(text, true) : 'moved';
-        if (result !== 'written') { pending = text; message = this.writeMessage(result, true); }
+      else if (!aligned) {
+        pending = text;
+        message = '定稿有改动，请核对已写入的文字。';
+      } else if (remainder) {
+        const result = stream?.failure ?? (await session.target ? await this.input.insert(remainder, true) : 'moved');
+        if (result !== 'written') {
+          pending = result === 'partial' ? text : remainder;
+          message = this.writeMessage(result, true);
+        }
       }
     } catch {
       pending = text;
@@ -74,7 +108,7 @@ export class Dictation {
       this.engine.end(id);
       this.input.clear();
       this.session = undefined;
-      this.set({ phase: 'idle', sessionId: null, pending, message, reveal: this.state.reveal + Number(!!pending) });
+      this.set({ phase: 'idle', sessionId: null, recordingStartedAt: null, pending, message, reveal: this.state.reveal + Number(!!pending) });
     }
   }
 

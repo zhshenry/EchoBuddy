@@ -19,6 +19,10 @@
   --window-button-size: 30px;
   --tool-button-size: 36px;
   --microphone-size: 42px;
+  --overlay-gutter-x: 12px;
+  --overlay-gutter-y: 16px;
+  --overlay-radius: 28px;
+  --dock-radius: 18px;
   --ink: #25282c;
   --muted: #656b70;
   --line: #e4e5e6;
@@ -37,7 +41,8 @@
   -webkit-font-smoothing: antialiased;
 }
 * { box-sizing: border-box; }
-body { margin: 0; padding: 16px 12px; overflow: hidden; }
+body { margin: 0; padding: var(--overlay-gutter-y) var(--overlay-gutter-x); overflow: hidden; }
+body.compact-overlay { padding: 0; }
 button {
   color: inherit; cursor: pointer; font: inherit; font-size: var(--control-text-size);
   line-height: var(--compact-line-height); -webkit-app-region: no-drag;
@@ -51,7 +56,7 @@ button:focus-visible { outline: 2px solid var(--acc-deep); outline-offset: 2px; 
 }
 .shell {
   --panel-motion: 200ms cubic-bezier(.22, .61, .36, 1);
-  width: 100%; overflow: hidden; background: var(--surface); border: 1px solid #181d240e; border-radius: 28px;
+  width: 100%; overflow: hidden; background: var(--surface); border: 1px solid #181d240e; border-radius: var(--overlay-radius);
   box-shadow: 0 4px 9px -4px #20232b2b, 0 1px 2px #20232b10; pointer-events: auto;
   transition: border-radius var(--panel-motion);
 }
@@ -76,6 +81,113 @@ button:focus-visible { outline: 2px solid var(--acc-deep); outline-offset: 2px; 
 .power:hover:enabled { background: color-mix(in srgb, var(--accent) 92%, black); }
 .power:disabled { opacity: .65; }
 .power:active:enabled, .tool:active { transform: scale(.96); }
+.edge-dock {
+  /* Keep the handle in place while the native window makes room for the transition. */
+  position: relative;
+  width: min(100vw, var(--dock-compact-width, 100vw));
+  height: min(100vh, var(--dock-compact-height, 100vh));
+  left: clamp(0px, calc(100vw - var(--dock-compact-width, 100vw)), var(--dock-compact-x, 0px));
+  top: clamp(0px, calc(100vh - var(--dock-compact-height, 100vh)), var(--dock-compact-y, 0px));
+  display: grid;
+  grid-template-rows: 30px 1fr 32px; justify-items: center; align-items: center;
+  padding: 5px 3px; gap: 3px; background: var(--dock-fill); color: var(--ink);
+  border: 1px solid var(--line); overflow: hidden;
+}
+.edge-dock[data-side="left"] { border-left: 0; border-radius: 0 var(--dock-radius) var(--dock-radius) 0; }
+.edge-dock[data-side="right"] { border-right: 0; border-radius: var(--dock-radius) 0 0 var(--dock-radius); }
+.edge-dock[data-side="top"] {
+  grid-template: 1fr / 32px minmax(0, 1fr) 32px; gap: 7px;
+  padding: 4px 7px; border-top: 0; border-radius: 0 0 var(--dock-radius) var(--dock-radius);
+}
+.dock-avatar, .dock-arrow {
+  display: grid; place-items: center; padding: 0; border: 0; border-radius: 8px;
+  width: 30px; height: 100%; min-height: 0; background: transparent; color: var(--muted);
+}
+.dock-avatar:hover, .dock-arrow:hover { background: #e4e5e66b; }
+.dock-avatar .bot-avatar { width: 30px; height: 30px; pointer-events: none; }
+.dock-avatar .bot-avatar::after { content: none; }
+.edge-dock > .power { position: static; width: 32px; height: 32px; }
+.dock-status {
+  display: inline-flex; justify-content: center; align-items: center; gap: 3px;
+  font-size: var(--caption-size); font-weight: var(--semibold); line-height: var(--compact-line-height); color: var(--muted);
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.dock-status svg { flex: none; color: var(--accent); }
+
+@property --dock-progress { syntax: '<number>'; inherits: true; initial-value: 1; }
+@property --dock-fill { syntax: '<color>'; inherits: true; initial-value: #fff; }
+.overlay {
+  --dock-fill: var(--surface);
+  transition: --dock-fill 160ms ease, --dock-progress var(--dock-motion-duration, 0ms) cubic-bezier(.28, .68, .28, 1);
+}
+.overlay:not([data-phase="idle"]) { --dock-fill: var(--tint); }
+.overlay[data-compact="true"] { --dock-progress: 0; }
+.dock-motion {
+  --dock-motion-duration: 260ms;
+  --dock-wave: sin(calc(180deg * var(--dock-progress)));
+  --dock-open-x: calc(var(--dock-expanded-x) + var(--overlay-gutter-x));
+  --dock-open-y: calc(var(--dock-expanded-y) + var(--overlay-gutter-y));
+  --dock-open-width: max(0px, calc(var(--dock-expanded-width) - 2 * var(--overlay-gutter-x)));
+  --dock-open-height: max(0px, calc(var(--dock-expanded-height) - 2 * var(--overlay-gutter-y)));
+  --dock-x: calc(var(--dock-compact-x) + (var(--dock-open-x) - var(--dock-compact-x)) * var(--dock-progress));
+  --dock-y: calc(var(--dock-compact-y) + (var(--dock-open-y) - var(--dock-compact-y)) * var(--dock-progress));
+  --dock-frame-width: max(calc(var(--dock-compact-x) + var(--dock-compact-width)), calc(var(--dock-expanded-x) + var(--dock-expanded-width)));
+  --dock-frame-height: max(calc(var(--dock-compact-y) + var(--dock-compact-height)), calc(var(--dock-expanded-y) + var(--dock-expanded-height)));
+  --dock-target-x: var(--dock-expanded-x);
+  --dock-target-y: var(--dock-expanded-y);
+  --dock-edge-radius: calc(var(--overlay-radius) * var(--dock-progress));
+  --dock-inner-radius: calc(var(--dock-radius) + (var(--overlay-radius) - var(--dock-radius)) * var(--dock-progress));
+  --dock-crest-radius: calc(var(--dock-inner-radius) + 34px * var(--dock-wave));
+  --dock-tail-radius: calc(var(--dock-inner-radius) + 10px * var(--dock-wave));
+  position: absolute;
+  left: clamp(calc(-1 * var(--dock-target-x)), calc(100vw - var(--dock-frame-width)), 0px);
+  top: clamp(calc(-1 * var(--dock-target-y)), calc(100vh - var(--dock-frame-height)), 0px);
+  width: var(--dock-frame-width);
+  height: var(--dock-frame-height);
+}
+.dock-motion[data-compact="true"] {
+  --dock-target-x: var(--dock-compact-x);
+  --dock-target-y: var(--dock-compact-y);
+}
+.dock-motion[data-side="left"] {
+  --dock-flow: to right;
+  --dock-outline: var(--dock-edge-radius) var(--dock-crest-radius) var(--dock-tail-radius) var(--dock-edge-radius);
+}
+.dock-motion[data-side="right"] {
+  --dock-flow: to left;
+  --dock-outline: var(--dock-crest-radius) var(--dock-edge-radius) var(--dock-edge-radius) var(--dock-tail-radius);
+}
+.dock-motion[data-side="top"] {
+  --dock-flow: to bottom;
+  --dock-outline: var(--dock-edge-radius) var(--dock-edge-radius) var(--dock-crest-radius) var(--dock-tail-radius);
+}
+.dock-motion-surface {
+  position: absolute;
+  left: var(--dock-x);
+  top: var(--dock-y);
+  width: calc(var(--dock-compact-width) + (var(--dock-open-width) - var(--dock-compact-width)) * var(--dock-progress));
+  height: calc(var(--dock-compact-height) + (var(--dock-open-height) - var(--dock-compact-height)) * var(--dock-progress));
+  border-radius: var(--dock-outline);
+  overflow: hidden;
+  background-color: color-mix(in srgb, var(--surface) calc(100% * var(--dock-progress)), var(--dock-fill));
+  background-image: linear-gradient(var(--dock-flow), transparent 25%, color-mix(in srgb, var(--tint) calc(80% * var(--dock-wave)), transparent) 79%, color-mix(in srgb, var(--accent) calc(15% * var(--dock-wave)), transparent));
+  box-shadow: inset 0 0 0 1px var(--line), 0 4px 9px -4px rgb(32 35 43 / calc(.17 * var(--dock-progress)));
+}
+.dock-motion :is(.edge-dock, .shell) { position: absolute; background: transparent; border-color: transparent; box-shadow: none; }
+.dock-motion .edge-dock {
+  left: calc(var(--dock-compact-x) - var(--dock-x));
+  top: calc(var(--dock-compact-y) - var(--dock-y));
+  width: var(--dock-compact-width);
+  height: var(--dock-compact-height);
+  opacity: clamp(0, 1 - 2.5 * var(--dock-progress), 1);
+}
+.dock-motion .shell {
+  left: 0;
+  top: max(0px, calc((100% - var(--dock-open-height)) / 2));
+  opacity: clamp(0, 2.5 * var(--dock-progress) - 1.5, 1);
+}
+.dock-motion :is(.tools > .bot-avatar, .meter) { -webkit-app-region: no-drag; }
+
 .panel-transition {
   height: auto;
   overflow: clip;
@@ -111,7 +223,7 @@ kbd {
 }
 .shape-heading { margin: 13px 0 8px; }
 .switch { display: flex; padding: 2px; border: 1px solid transparent; border-radius: 8px; background: #f0f1f2; }
-.switch button { flex: 1; padding: 0 9px; color: var(--muted); }
+.switch button { flex: 1; min-width: 44px; padding: 0 9px; color: var(--muted); }
 .switch button[aria-pressed="true"] {
   background: white; color: var(--ink); font-weight: var(--semibold); box-shadow: 0 1px 3px #00000014;
 }
@@ -198,7 +310,7 @@ kbd {
 .mode-options label { display: flex; align-items: center; justify-content: center; cursor: pointer; }
 .mode-options label:has(input:focus-visible) { outline: 2px solid var(--acc-deep); outline-offset: 2px; }
 .mode-options:disabled label, .language-options label:has(input:disabled) { cursor: default; }
-.mode-options label:has(input[disabled]) { cursor: default; color: var(--muted); }
+.mode-options label:has(input[disabled]) { cursor: default; color: color-mix(in srgb, var(--muted) 80%, var(--surface)); }
 .mode-options:disabled { opacity: .7; }
 .language-options input { width: 15px; height: 15px; flex: none; margin: 0; accent-color: var(--acc-deep); }
 .language-options { display: flex; flex-wrap: wrap; gap: 4px 12px; padding-top: 10px; }
@@ -240,7 +352,7 @@ kbd {
 }
 .settings-content { min-width: 0; min-height: 0; overflow: auto; padding: 12px 24px 16px; }
 .settings-section { padding: 12px 0 13px; }
-.settings-section + .settings-section { border-top: 1px solid var(--line); }
+.settings-section + .settings-section, .settings-section.dock-preference { border-top: 1px solid var(--line); }
 .settings-section :is(h2, h3) { margin: 0 0 9px; }
 .settings-section .row > h2 { margin: 0; }
 .settings-content .settings-inline-row { flex-wrap: wrap; }
@@ -261,7 +373,6 @@ kbd {
   color: var(--acc-deep); background: var(--tint); font-weight: var(--semibold);
 }
 .write-options button:disabled { color: var(--muted); }
-.write-options small { margin-left: 3px; font-size: var(--caption-size); }
 .settings-inline-row :is(.segmented-options, .language-selector) {
   width: min(100%, var(--inline-control-width)); min-width: 0; margin-left: auto; flex: none;
   min-height: var(--compact-control-height);
@@ -272,7 +383,6 @@ kbd {
   min-height: var(--compact-control-height); flex: none; padding: 0 4px;
 }
 .settings-inline-row .segmented-options > :is(label, button) { padding: 0 6px; white-space: nowrap; }
-.settings-inline-row .write-options small { display: none; }
 .language-selector {
   display: inline-flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; max-width: 200px;
   padding: 3px 9px; border: 1px solid var(--line); border-radius: 8px; background: #f2f3f4;

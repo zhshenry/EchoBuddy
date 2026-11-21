@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import type { DictationState } from '../../shared/desktop';
+import type { DictationState, WriteTiming } from '../../shared/desktop';
 import { Capture } from './capture';
 
 function joined(lines: string[]) {
   return lines.reduce((text, line) => text + (/[a-z\d.,!?]$/i.test(text) && /^[a-z\d]/i.test(line) ? ' ' : '') + line, '');
 }
 
-export function useCapture({ phase, sessionId }: DictationState) {
+export function useCapture({ phase, sessionId }: DictationState, timing: WriteTiming) {
   const running = useRef<{ id: string; capture: Capture; stopping: boolean } | undefined>(undefined);
   const [levels, setLevels] = useState<number[]>(Array(25).fill(0));
   const [lines, setLines] = useState<string[]>([]);
@@ -23,6 +23,9 @@ export function useCapture({ phase, sessionId }: DictationState) {
       const capture = new Capture(sessionId, {
         level: value => setLevels(old => [...old.slice(1), value]),
         words: (confirmed, partial) => { setLines(confirmed); setDraft(partial); },
+        progress: timing === 'streaming' ? confirmed => {
+          void desktop.writeProgress(sessionId, joined(confirmed)).catch(() => {});
+        } : undefined,
         ended: () => { if (!running.current?.stopping) void desktop.toggle(); },
       });
       const current = { id: sessionId, capture, stopping: false };
@@ -56,7 +59,7 @@ export function useCapture({ phase, sessionId }: DictationState) {
         })();
       } else if (!current) void desktop.complete(sessionId, '');
     }
-  }, [phase, sessionId]);
+  }, [phase, sessionId, timing]);
 
   return { levels, lines, draft };
 }

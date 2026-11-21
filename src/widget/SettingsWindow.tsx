@@ -105,7 +105,7 @@ export function SettingsWindow({ dictation, preferences, update }: DesktopSnapsh
         {page === 'voice' && <>
           <section className="settings-section settings-inline-row" style={voiceTheme}>
             <h2>写入时机</h2>
-            <WriteOptions />
+            <WriteOptions timing={preferences.writeTiming} busy={busy} />
           </section>
           <section className="settings-section settings-inline-row" style={voiceTheme}>
             <h2>识别语言</h2>
@@ -120,7 +120,20 @@ export function SettingsWindow({ dictation, preferences, update }: DesktopSnapsh
             <p className="settings-note">热词识别待接入。</p>
           </section>
         </>}
-        {page === 'appearance' && <AvatarPicker avatar={preferences.avatar} />}
+        {page === 'appearance' && <>
+          <AvatarPicker avatar={preferences.avatar} />
+          <section className="settings-section dock-preference">
+            <div className="row">
+              <h2 id="dock-preference-title">贴边自动收起</h2>
+              <div className="switch" role="group" aria-labelledby="dock-preference-title">
+                <button type="button" aria-pressed={preferences.dockOnEdge}
+                  onClick={() => void desktop.setDockOnEdge(true)}>是</button>
+                <button type="button" aria-pressed={!preferences.dockOnEdge}
+                  onClick={() => void desktop.setDockOnEdge(false)}>否</button>
+              </div>
+            </div>
+          </section>
+        </>}
         {page === 'shortcuts' && <section className="settings-section">
           <div className="row">
             <h2>听写快捷键</h2>

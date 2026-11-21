@@ -5,7 +5,7 @@ import { isAbsolute, join, relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { autoUpdater } from 'electron-updater';
 import { isBotAvatar } from '../shared/bot-avatar';
-import { AVAILABLE_RECORDING_MODES, resolveSettingsPage, type LanguagePanelAnchor, type Preferences, type RecordingMode, type SettingsPage } from '../shared/desktop';
+import { AVAILABLE_RECORDING_MODES, resolveSettingsPage, type LanguagePanelAnchor, type Preferences, type RecordingMode, type SettingsPage, type WriteTiming } from '../shared/desktop';
 import { RECOGNITION_LANGUAGES, type RecognitionLanguage } from '../shared/speech-contracts';
 import { Dictation } from './dictation';
 import { createOverlay } from './overlay';
@@ -48,10 +48,12 @@ async function start() {
     return net.fetch(pathToFileURL(file).href);
   });
 
-  const { window, resize, trackPointer } = createOverlay(preload, icon, saved.position, position => {
+  const overlay = createOverlay(preload, icon, saved, (position, dock) => {
     saved.position = position;
+    saved.dock = dock;
     persist();
   });
+  const { window } = overlay;
   let settingsWindow: BrowserWindow | undefined;
   let languageWindow: BrowserWindow | undefined;
   const say = (channel: string, value?: unknown) => {
@@ -166,7 +168,10 @@ async function start() {
 
   const speech = new SpeechEngine(app.isPackaged ? join(process.resourcesPath, 'speech') : join(appPath, 'vendor/speech'));
   const input = new WindowsInput(app.isPackaged ? join(process.resourcesPath, 'echo-input.exe') : join(appPath, 'dist-native/echo-input.exe'));
-  const dictation = new Dictation(speech, input, value => say('dictation:state', value), text => clipboard.writeText(text));
+  const dictation = new Dictation(speech, input, value => {
+    overlay.setAttention(!!(value.pending || value.message));
+    say('dictation:state', value);
+  }, text => clipboard.writeText(text));
   let editing = false;
   const updateEnabled = app.isPackaged && existsSync(join(process.resourcesPath, 'app-update.yml'));
   const updates = new AppUpdates(app.getVersion(), updateEnabled ? autoUpdater : null, value => say('update:state', value), () => editing || dictation.blocksInstall());
@@ -175,7 +180,7 @@ async function start() {
   let quitting = false;
   const prefs = (): Preferences => ({
     avatar: saved.avatar, shortcut: saved.shortcut, shortcutActive,
-    recordingMode: saved.recordingMode, languages: saved.languages,
+    recordingMode: saved.recordingMode, writeTiming: saved.writeTiming, languages: saved.languages, dockOnEdge: saved.dockOnEdge,
   });
   function updatePreferences() {
     persist();
@@ -192,11 +197,11 @@ async function start() {
     closeLanguagePanel();
     if (!window.isVisible()) window.showInactive();
     const state = dictation.snapshot();
-    if (saved.recordingMode === 'meeting' && state.phase === 'idle' && !state.pending) {
+    if (saved.recordingMode === 'meeting' && state.phase === 'idle') {
       dictation.showMessage(meetingUnavailable);
       return;
     }
-    dictation.toggle(shortcutActive ? saved.shortcut : undefined);
+    dictation.toggle(shortcutActive ? saved.shortcut : undefined, saved.writeTiming);
   }
   function finishShortcut(value?: string): string | null {
     if (!editing) return null;
@@ -233,18 +238,24 @@ async function start() {
       return action(...args as Args);
     });
   }
-  handle('desktop:snapshot', () => ({ dictation: dictation.snapshot(), update: updates.snapshot(), preferences: prefs() }), 'all');
+  handle('desktop:snapshot', () => ({ dictation: dictation.snapshot(), update: updates.snapshot(), preferences: prefs(), dock: overlay.snapshot() }), 'all');
   handle('dictation:toggle', toggle);
   handle('dictation:recording', (id: string) => dictation.recording(id));
   handle('dictation:transcribe', (id: string, audio: Uint8Array) => dictation.transcribe(id, audio));
+  handle('dictation:write-progress', (id: string, text: string) => {
+    if (typeof text === 'string') return dictation.writeProgress(id, text);
+  });
   handle('dictation:complete', (id: string, text: string, error?: string) => {
     if (typeof text === 'string' && (error === undefined || typeof error === 'string')) return dictation.complete(id, text, error);
   });
   handle('dictation:insert-pending', () => dictation.insertPending());
   handle('dictation:copy', () => dictation.copyPending());
   handle('dictation:clear-message', () => dictation.showMessage(''));
-  handle('overlay:resize', resize);
-  handle('overlay:track-pointer', (enabled: boolean) => trackPointer(enabled === true));
+  handle('overlay:resize', overlay.resize);
+  handle('overlay:track-pointer', (enabled: boolean) => overlay.trackPointer(enabled === true));
+  handle('overlay:expand', overlay.expand);
+  handle('overlay:dock-motion-finished', overlay.finishDockMotion);
+  handle('overlay:panel-open', (open: boolean) => overlay.setPanelOpen(open === true));
   ipcMain.handle('languages:toggle-panel', (event, anchor: LanguagePanelAnchor, keyboard: boolean) =>
     toggleLanguagePanel(authorizedWindow(event, 'both'), anchor, keyboard));
   handle('languages:close-panel', closeLanguagePanel, 'all');
@@ -257,6 +268,17 @@ async function start() {
     updatePreferences();
     if (mode === 'dictation' && dictation.snapshot().message === meetingUnavailable) dictation.showMessage('');
   }, 'both');
+  handle('preferences:write-timing', (timing: WriteTiming) => {
+    if ((timing !== 'streaming' && timing !== 'sentence') || dictation.snapshot().phase !== 'idle' || timing === saved.writeTiming) return;
+    saved.writeTiming = timing;
+    updatePreferences();
+  }, 'both');
+  handle('preferences:dock-on-edge', (enabled: boolean) => {
+    if (typeof enabled !== 'boolean' || saved.dockOnEdge === enabled) return;
+    saved.dockOnEdge = enabled;
+    overlay.setDockOnEdge(enabled);
+    updatePreferences();
+  }, 'settings');
   handle('preferences:toggle-language', (language: RecognitionLanguage) => {
     if (!RECOGNITION_LANGUAGES.includes(language)) return;
     const selected = saved.languages.includes(language);
@@ -285,12 +307,12 @@ async function start() {
   const tray = new Tray(nativeImage.createFromPath(join(appPath, 'assets/tray.png')));
   tray.setToolTip('EchoBuddy · 离线听写');
   tray.setContextMenu(Menu.buildFromTemplate([
-    { label: '显示听写浮窗', click: () => { window.showInactive(); } },
+    { label: '显示听写浮窗', click: overlay.expand },
     { type: 'separator' },
     { label: '退出 EchoBuddy', click: () => { app.quit(); } },
   ]));
-  tray.on('double-click', () => window.showInactive());
-  app.on('second-instance', () => window.showInactive());
+  tray.on('double-click', overlay.expand);
+  app.on('second-instance', overlay.expand);
   const timers = updateEnabled ? [
     setTimeout(() => void updates.check(), 30000),
     setInterval(() => void updates.check(), 4 * 60 * 60 * 1000),

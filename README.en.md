@@ -12,10 +12,10 @@
 
 ## Features
 
-- **Type at your cursor.** When you stop dictating, EchoBuddy inserts the text at your original cursor position. If the cursor moves or you switch input fields, EchoBuddy keeps the transcript for you to insert or copy.
+- **Type at your cursor.** Choose to insert text in batches while you speak or all at once when you stop. If you move the cursor or switch input fields, the remaining text stays in the transcript bubble for you to insert or copy.
 - **Dictate offline.** EchoBuddy transcribes microphone audio on your device, so dictation works without an internet connection.
 - **See words as you speak.** Click the speech bubble to show the live transcript.
-- **Make the floating bar yours.** Drag the avatar or waveform to move it. Change the avatar, colors, or shortcut in Settings.
+- **Make the floating bar yours.** Drag the avatar or waveform to move the bar. It can collapse at the left, right, or top edge of the screen, where you can still start or stop recording. Adjust edge docking, the avatar, colors, or the shortcut in Settings.
 - **Update from the app.** EchoBuddy checks for updates in the background. You can also check in Settings and choose when to restart and install a downloaded update.
 
 ## Install and get started

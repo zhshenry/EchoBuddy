@@ -6,6 +6,7 @@ export type DictationPhase = 'idle' | 'preparing' | 'recording' | 'finishing';
 export interface DictationState {
   phase: DictationPhase;
   sessionId: string | null;
+  recordingStartedAt: number | null;
   pending: string;
   message: string;
   reveal: number;
@@ -13,6 +14,13 @@ export interface DictationState {
 
 export type RecordingMode = 'dictation' | 'meeting';
 export const AVAILABLE_RECORDING_MODES: readonly RecordingMode[] = ['dictation'];
+export type WriteTiming = 'streaming' | 'sentence';
+export const DOCK_SIDES = ['left', 'right', 'top'] as const;
+export type DockSide = typeof DOCK_SIDES[number];
+export type DockPlacement = { side: DockSide; displayId: number; offset: number };
+type DockBounds = { x: number; y: number; width: number; height: number };
+export type DockMotion = { id: number; compact: DockBounds; expanded: DockBounds };
+export type OverlayDock = { side: DockSide; compact: boolean; motion?: DockMotion; compactBounds?: DockBounds } | null;
 export type SettingsPage = 'voice' | 'appearance' | 'shortcuts' | 'updates';
 
 export function resolveSettingsPage(value: unknown): SettingsPage {
@@ -24,6 +32,8 @@ export interface Preferences {
   shortcut: string;
   shortcutActive: boolean;
   recordingMode: RecordingMode;
+  writeTiming: WriteTiming;
+  dockOnEdge: boolean;
   languages: RecognitionLanguage[];
 }
 
@@ -40,6 +50,7 @@ export interface DesktopSnapshot {
   dictation: DictationState;
   preferences: Preferences;
   update: UpdateStatus;
+  dock: OverlayDock;
 }
 
 export type OverlayPointer = { x: number; y: number } | null;
@@ -50,17 +61,23 @@ export interface DesktopBridge {
   toggle(): Promise<void>;
   recording(id: string): Promise<void>;
   transcribe(id: string, audio: Uint8Array): Promise<string>;
+  writeProgress(id: string, text: string): Promise<void>;
   complete(id: string, text: string, error?: string): Promise<void>;
   insertPending(): Promise<void>;
   copyPending(): Promise<void>;
   clearMessage(): Promise<void>;
   resize(height: number): void;
+  expandOverlay(): Promise<void>;
+  finishDockMotion(id: number): void;
+  setOverlayPanelOpen(open: boolean): Promise<void>;
   toggleLanguagePanel(anchor: LanguagePanelAnchor, keyboard: boolean): Promise<void>;
   closeLanguagePanel(): Promise<void>;
   openSettings(page?: SettingsPage): Promise<void>;
   minimizeSettings(): Promise<void>;
   closeSettings(): Promise<void>;
   setRecordingMode(mode: RecordingMode): Promise<void>;
+  setWriteTiming(timing: WriteTiming): Promise<void>;
+  setDockOnEdge(value: boolean): Promise<void>;
   toggleLanguage(language: RecognitionLanguage): Promise<void>;
   setAvatar(avatar: string): Promise<boolean>;
   beginShortcut(): Promise<boolean>;
@@ -73,6 +90,7 @@ export interface DesktopBridge {
   onLanguagePanel(handle: (open: boolean) => void): () => void;
   onSettingsPage(handle: (page: SettingsPage) => void): () => void;
   onUpdate(handle: (state: UpdateStatus) => void): () => void;
+  onOverlayDock(handle: (state: OverlayDock) => void): () => void;
   onOverlayPointer(handle: (point: OverlayPointer) => void): () => void;
   onShortcutCancelled(handle: () => void): () => void;
 }

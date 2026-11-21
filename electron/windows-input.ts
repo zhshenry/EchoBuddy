@@ -10,15 +10,16 @@ export class WindowsInput {
 
   constructor(private readonly executable: string) {}
 
-  async capture(shortcut?: string): Promise<boolean> {
-    if (!shortcut) return await this.ask('capture') === 'captured';
+  async capture(shortcut?: string, streaming = false): Promise<boolean> {
+    const command = streaming ? 'capture-stream' : 'capture';
+    if (!shortcut) return await this.ask(command) === 'captured';
     const parts = shortcut.split('+');
     const key = parts.pop()!;
     const code = key === 'Space' ? 0x20 : key.length > 1 ? 0x6f + Number(key.slice(1)) : key.charCodeAt(0);
     // Win32 MOD_ALT, MOD_CONTROL, MOD_SHIFT, MOD_WIN.
     const modifiers = Number(parts.includes('Alt')) | (Number(parts.includes('Ctrl')) << 1) |
       (Number(parts.includes('Shift')) << 2) | (Number(parts.includes('Win')) << 3);
-    return await this.ask(`capture ${code} ${modifiers}`) === 'captured';
+    return await this.ask(`${command} ${code} ${modifiers}`) === 'captured';
   }
   async insert(text: string, original: boolean): Promise<WriteResult> {
     const command = original ? 'insert' : 'current';

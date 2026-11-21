@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
-import { ArrowUpRight, ChatCircleDots, GearSix, Microphone, Stop, X } from '@phosphor-icons/react';
+import { CaretDown, CaretLeft, CaretRight, ChatCircleDots, Circle, GearSix, Microphone, Stop, X } from '@phosphor-icons/react';
 import { botAvatarChoice, botAvatarColors } from '../shared/bot-avatar';
 import type { DesktopSnapshot } from '../shared/desktop';
 import { RECOGNITION_LANGUAGES } from '../shared/speech-contracts';
@@ -14,12 +14,13 @@ import './widget/widget.css';
 
 const desktop = window.echoBuddy;
 const initial: DesktopSnapshot = {
-  dictation: { phase: 'idle', sessionId: null, pending: '', message: '', reveal: 0 },
+  dictation: { phase: 'idle', sessionId: null, recordingStartedAt: null, pending: '', message: '', reveal: 0 },
   preferences: {
     avatar: 'drop:coral', shortcut: 'Ctrl+Alt+M', shortcutActive: true,
-    recordingMode: 'dictation', languages: [...RECOGNITION_LANGUAGES],
+    recordingMode: 'dictation', writeTiming: 'sentence', languages: [...RECOGNITION_LANGUAGES], dockOnEdge: true,
   },
   update: { current: '', enabled: false, phase: 'idle', message: '', progress: 0, version: '' },
+  dock: null,
 };
 const phaseText = { idle: '待机', preparing: '正在打开麦克风', recording: '录音中', finishing: '正在转写' };
 type Pane = 'settings' | 'transcript' | null;
@@ -28,28 +29,46 @@ function PanelTransition({ open, id, children }: { open: boolean; id?: string; c
   return <div className="panel-transition" id={id} inert={!open}>{children}</div>;
 }
 
-function App({ dictation, preferences, update }: DesktopSnapshot) {
+function DockClock({ startedAt }: { startedAt: number }) {
+  const [time, setTime] = useState(Date.now);
+  useEffect(() => {
+    const timer = window.setInterval(() => setTime(Date.now()), 250);
+    return () => window.clearInterval(timer);
+  }, []);
+  const seconds = Math.max(0, Math.floor((time - startedAt) / 1000));
+  const elapsed = [Math.floor(seconds / 60), seconds % 60].map(value => String(value).padStart(2, '0')).join(':');
+  return <span className="dock-status" title={'已录音 ' + elapsed}><Circle size={6} weight="fill" aria-hidden="true" />{elapsed}</span>;
+}
+
+function App({ dictation, preferences, update, dock }: DesktopSnapshot) {
   const [pane, setPane] = useState<Pane>(null);
   const [languagesOpen, setLanguagesOpen] = useState(false);
   const [dismissed, setDismissed] = useState('');
   const shell = useRef<HTMLElement>(null);
   const liveText = useRef<HTMLDivElement>(null);
-  const { levels, lines, draft } = useCapture(dictation);
-  const { phase, pending, message, reveal } = dictation;
+  const { levels, lines, draft } = useCapture(dictation, preferences.writeTiming);
+  const { phase, pending, message, reveal, recordingStartedAt } = dictation;
   const busy = phase !== 'idle';
   const recording = phase === 'recording';
   const canStop = recording || phase === 'preparing';
   const meeting = preferences.recordingMode === 'meeting';
+  const compact = dock?.compact === true;
+  const motion = dock?.motion;
+  const panelOpen = pane !== null;
   const updateBlocked = busy ? '本次听写完成后可安装' : pending ? '请先写入或复制本次转写' : '';
   useLayoutEffect(() => {
-    const element = shell.current!;
+    document.body.classList.toggle('compact-overlay', compact);
+    const element = shell.current;
+    if (motion && window.matchMedia('(prefers-reduced-motion: reduce)').matches) desktop.finishDockMotion(motion.id);
+    if (compact || motion || !element) return;
     const observer = new ResizeObserver(() => {
       const bottomPadding = Number.parseFloat(getComputedStyle(document.body).paddingBottom);
       desktop.resize(element.getBoundingClientRect().bottom + bottomPadding);
     });
     observer.observe(element);
     return () => observer.disconnect();
-  }, []);
+  }, [compact, motion]);
+  useEffect(() => { void desktop.setOverlayPanelOpen(panelOpen); }, [panelOpen]);
   useEffect(() => {
     if (reveal && pending) setPane('transcript');
   }, [reveal, pending]);
@@ -79,20 +98,38 @@ function App({ dictation, preferences, update }: DesktopSnapshot) {
   }, [languagesOpen, pane]);
 
   const label = phase === 'preparing' ? '取消准备' : recording ? '结束录音并写入' : phase === 'finishing' ? '正在转写'
-    : pending ? '查看待写入文字' : meeting ? '会议录音待接入' : '开始听写';
+    : meeting ? '会议录音待接入' : '开始听写';
   const { color } = botAvatarChoice(preferences.avatar);
   const palette = botAvatarColors.find(item => item.id === color)!;
-  return <section className="shell" ref={shell} aria-label="EchoBuddy 听写浮窗" data-phase={phase}
+  const theme = {
+    '--accent': palette.lo, '--tint': palette.soft, '--power-ink': color === 'yellow' ? palette.deep : 'white',
+  } as CSSProperties;
+  const avatar = <BotAvatar avatar={preferences.avatar} motionId="echobuddy-dictation"
+    activity={recording ? 'working' : busy ? 'thinking' : 'idle'} />;
+  const recordButton = (small: boolean) => <button type="button" className="power" disabled={phase === 'finishing'} aria-label={label}
+    title={label + ' · ' + preferences.shortcut} onClick={() => void desktop.toggle()}>
+    {canStop || (small && phase === 'finishing') ? <Stop size={small ? 16 : 19} weight="fill" />
+      : <Microphone size={small ? 19 : 22} weight="bold" />}
+  </button>;
+  const Caret = dock?.side === 'top' ? CaretDown : dock?.side === 'left' ? CaretRight : CaretLeft;
+  const compactBar = dock && (compact || motion)
+    ? <section className="edge-dock" role="group" aria-label="EchoBuddy 贴边听写" data-side={dock.side} data-phase={phase} inert={!compact}>
+      <button type="button" className="dock-avatar" aria-label="展开 EchoBuddy" title="展开 EchoBuddy" onClick={() => void desktop.expandOverlay()}>
+        {avatar}
+      </button>
+      {phase === 'idle' ? <button type="button" className="dock-arrow" aria-label="展开完整浮窗" title="展开完整浮窗"
+        onClick={() => void desktop.expandOverlay()}><Caret size={15} weight="bold" aria-hidden="true" /></button>
+        : recording && recordingStartedAt !== null ? <DockClock startedAt={recordingStartedAt} />
+        : <span className="dock-status" role="status">{phase === 'preparing' ? '准备中' : '转写中'}</span>}
+      {recordButton(true)}
+    </section> : null;
+  const expandedBar = compact && !motion ? null : <section className="shell" ref={shell} aria-label="EchoBuddy 听写浮窗" data-phase={phase} inert={compact}
     onPointerDown={event => {
       if (languagesOpen && event.target instanceof Element && !event.target.closest('.language-selector')) void desktop.closeLanguagePanel();
-    }} style={{
-    '--accent': palette.lo, '--tint': palette.soft,
-    '--power-ink': color === 'yellow' ? palette.deep : 'white',
-  } as CSSProperties}>
+    }}>
     <div className="bar">
       <div className="tools">
-        <BotAvatar avatar={preferences.avatar} motionId="echobuddy-dictation"
-          activity={recording ? 'working' : busy ? 'thinking' : 'idle'} />
+        {avatar}
         <div className="meter" role="img" aria-label={phaseText[phase]}>
           {levels.map((value, i) => <i key={i} style={{
             height: (recording ? 3 + Math.min(1, value ** 0.65) * 24 : 3) + 'px', opacity: 0.35 + i / 40,
@@ -103,17 +140,14 @@ function App({ dictation, preferences, update }: DesktopSnapshot) {
         <button type="button" className="tool" aria-label="转写气泡" title="显示或收起转写" aria-expanded={pane === 'transcript'} aria-controls="transcript-panel"
           onClick={() => togglePane('transcript')}><ChatCircleDots size={22} /></button>
       </div>
-      <button type="button" className="power" disabled={phase === 'finishing'} aria-label={label}
-        title={label + ' · ' + preferences.shortcut} onClick={() => void desktop.toggle()}>
-        {canStop ? <Stop size={19} weight="fill" /> : <Microphone size={22} weight="bold" />}
-      </button>
+      {recordButton(false)}
     </div>
     <PanelTransition id="settings-panel" open={pane === 'settings'}>
       <div className="panel inline-settings" onScroll={() => { if (languagesOpen) void desktop.closeLanguagePanel(); }}>
         <div className="row inline-settings-heading">
           <h2>设置</h2>
           <button type="button" className="more-settings-button" title="打开更多设置" onClick={() => void desktop.openSettings()}>
-            更多设置 <ArrowUpRight size={13} aria-hidden="true" />
+            更多设置 <GearSix size={13} aria-hidden="true" />
           </button>
         </div>
         <section className="settings-section settings-inline-row">
@@ -122,7 +156,7 @@ function App({ dictation, preferences, update }: DesktopSnapshot) {
         </section>
         <section className="settings-section settings-inline-row">
           <h3>写入时机</h3>
-          <WriteOptions />
+          <WriteOptions timing={preferences.writeTiming} busy={busy} />
         </section>
         <section className="settings-section settings-inline-row">
           <h3>识别语言</h3>
@@ -151,9 +185,35 @@ function App({ dictation, preferences, update }: DesktopSnapshot) {
     </PanelTransition>}
     {!busy && !pending && !message && update.phase === 'ready' && dismissed !== update.version &&
       <PanelTransition open={pane === null}>
-        <UpdateNotice version={update.version} open={() => void desktop.openSettings('updates')} dismiss={() => setDismissed(update.version)} />
+        <UpdateNotice version={update.version} install={() => void desktop.installUpdate()} dismiss={() => setDismissed(update.version)} />
       </PanelTransition>}
   </section>;
+
+  const compactBounds = motion?.compact ?? dock?.compactBounds;
+  const style = {
+    ...theme,
+    ...(compactBounds && {
+      '--dock-compact-x': `${compactBounds.x}px`, '--dock-compact-y': `${compactBounds.y}px`,
+      '--dock-compact-width': `${compactBounds.width}px`, '--dock-compact-height': `${compactBounds.height}px`,
+    }),
+    ...(motion && {
+      '--dock-expanded-x': `${motion.expanded.x}px`, '--dock-expanded-y': `${motion.expanded.y}px`,
+      '--dock-expanded-width': `${motion.expanded.width}px`, '--dock-expanded-height': `${motion.expanded.height}px`,
+    }),
+  } as CSSProperties;
+  return <div className={motion ? 'overlay dock-motion' : 'overlay'} data-compact={compact}
+    data-side={dock?.side} data-phase={phase} style={style}
+    onTransitionEnd={motion ? event => {
+      if (event.target === event.currentTarget && event.propertyName === '--dock-progress' &&
+        Number(getComputedStyle(event.currentTarget).getPropertyValue('--dock-progress')) === (compact ? 0 : 1)) {
+        desktop.finishDockMotion(motion.id);
+      }
+    } : undefined}>
+    <div className={motion ? 'dock-motion-surface' : undefined}>
+      {compactBar}
+      {expandedBar}
+    </div>
+  </div>;
 }
 
 const params = new URLSearchParams(window.location.search);
@@ -168,6 +228,7 @@ function Root() {
       desktop.onDictation(value => setSnapshot(old => ({ ...old, dictation: value }))),
       desktop.onPreferences(value => setSnapshot(old => ({ ...old, preferences: value }))),
       desktop.onUpdate(value => setSnapshot(old => ({ ...old, update: value }))),
+      desktop.onOverlayDock(value => setSnapshot(old => ({ ...old, dock: value }))),
     ];
     void desktop.snapshot().then(setSnapshot);
     return () => subscriptions.forEach(unsubscribe => unsubscribe());

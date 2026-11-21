@@ -11,8 +11,9 @@ struct DictationShortcut {
     UINT modifiers = 0;
 };
 
-// Some chat editors keep the caret internal. In that case, use the original
-// focus only while no input has had a chance to change the insertion point.
+inline constexpr ULONG_PTR dictationInputTag = 0x45425544;
+
+// Track intervening input for opaque chat fields and streaming writes.
 class ChatTargetWatch {
 public:
     ~ChatTargetWatch() { stop(); }
@@ -79,7 +80,8 @@ private:
     static LRESULT CALLBACK keyboardEvent(int code, WPARAM event, LPARAM data) {
         if (code == HC_ACTION) {
             const auto* key = reinterpret_cast<const KBDLLHOOKSTRUCT*>(data);
-            active_->keyEvent(key->vkCode, event == WM_KEYDOWN || event == WM_SYSKEYDOWN);
+            if (!(key->flags & LLKHF_INJECTED) || key->dwExtraInfo != dictationInputTag)
+                active_->keyEvent(key->vkCode, event == WM_KEYDOWN || event == WM_SYSKEYDOWN);
         }
         return CallNextHookEx(nullptr, code, event, data);
     }

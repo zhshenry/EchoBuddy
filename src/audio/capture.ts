@@ -4,8 +4,29 @@ import { SPEECH_SAMPLE_RATE as rate } from '../../shared/speech-contracts';
 type Events = {
   level(value: number): void;
   words(lines: string[], draft: string): void;
+  progress?(lines: string[]): void;
   ended(): void;
 };
+
+const words = new Intl.Segmenter('zh', { granularity: 'word' });
+
+export function stableDraftPrefix(previous: string, current: string): string {
+  const left = Array.from(previous), right = Array.from(current);
+  let matched = 0;
+  while (matched < left.length && left[matched] === right[matched]) matched++;
+  const confirmed = Math.min(matched, right.length - 2);
+  if (confirmed < 2) return '';
+
+  // Hold back the newest draft's tail and only insert complete words or numbers.
+  const limit = right.slice(0, confirmed).join('').length;
+  let end = 0;
+  for (const { index, segment } of words.segment(current)) {
+    if (index + segment.length > limit) break;
+    end = index + segment.length;
+  }
+  const prefix = current.slice(0, end).trimEnd();
+  return Array.from(prefix).length >= 2 ? prefix : '';
+}
 
 export class Capture {
   private context?: AudioContext;
@@ -97,14 +118,21 @@ export class Capture {
       this.commit();
       return;
     }
-    if (!this.closed && this.hasVoice && !this.draftInFlight && this.length - this.lastDraft >= rate * 1.65) {
+    const draftInterval = this.events.progress ? 0.7 : 1.65;
+    if (!this.closed && this.hasVoice && !this.draftInFlight && this.length - this.lastDraft >= rate * draftInterval) {
       this.lastDraft = this.length;
       const segment = this.segment;
       this.draftInFlight = true;
-      void this.recognize(this.frames, this.length).then(text => {
+      void this.recognize(this.frames, this.length).then(async text => {
         if (!this.closed && segment === this.segment && text) {
+          const progress = this.events.progress;
+          const stable = progress ? stableDraftPrefix(this.draft, text) : '';
           this.draft = text;
           this.events.words(this.confirmed(), text);
+          if (stable && progress) {
+            await this.finalPasses;
+            if (!this.closed && segment === this.segment && !this.error) progress([...this.lines, stable]);
+          }
         }
       }).catch(() => {
         // Final passes still receive the full segment.
@@ -124,6 +152,7 @@ export class Capture {
       const text = await this.recognize(frames, length);
       if (text) this.lines.push(text);
       this.events.words(this.confirmed(), this.draft);
+      if (text && !this.closed && !this.error) this.events.progress?.(this.confirmed());
     }).catch(error => { this.error = error; });
   }
 }

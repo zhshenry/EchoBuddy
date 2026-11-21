@@ -1,7 +1,7 @@
 import { useEffect, useRef, type CSSProperties } from 'react';
 import { CaretDown, X } from '@phosphor-icons/react';
 import { botAvatarChoice, botAvatarColors } from '../../shared/bot-avatar';
-import { AVAILABLE_RECORDING_MODES, SHORT_DICTATION_MAX_SECONDS, type Preferences, type RecordingMode } from '../../shared/desktop';
+import { AVAILABLE_RECORDING_MODES, SHORT_DICTATION_MAX_SECONDS, type Preferences, type RecordingMode, type WriteTiming } from '../../shared/desktop';
 import { RECOGNITION_LANGUAGES, type RecognitionLanguage } from '../../shared/speech-contracts';
 
 const languageNames: Record<RecognitionLanguage, string> = {
@@ -25,10 +25,12 @@ export function RecordingOptions({ mode, busy }: { mode: RecordingMode; busy: bo
   </fieldset>;
 }
 
-export function WriteOptions() {
+export function WriteOptions({ timing, busy }: { timing: WriteTiming; busy: boolean }) {
   return <div className="segmented-options write-options" role="group" aria-label="听写写入时机">
-    <button type="button" title="待接入" aria-description="待接入" disabled>流式输入 <small aria-hidden="true">待接入</small></button>
-    <button type="button" aria-pressed="true">整句写入</button>
+    <button type="button" aria-pressed={timing === 'streaming'} disabled={busy} title="录音时分批写入"
+      onClick={() => void window.echoBuddy.setWriteTiming('streaming')}>流式输入</button>
+    <button type="button" aria-pressed={timing === 'sentence'} disabled={busy} title="停录后一次写入"
+      onClick={() => void window.echoBuddy.setWriteTiming('sentence')}>整句写入</button>
   </div>;
 }
 

@@ -31,11 +31,11 @@ export function UpdateSettings({ update, blocked, showReleaseLink = false }: {
   </section>;
 }
 
-export function UpdateNotice({ version, open, dismiss }: { version: string; open: () => void; dismiss: () => void }) {
+export function UpdateNotice({ version, install, dismiss }: { version: string; install: () => void; dismiss: () => void }) {
   return <div className="update-notice">
     <DownloadSimple size={17} weight="bold" aria-hidden="true" />
     <span role="status">v{version} 已下载</span>
-    <button onClick={open}>查看更新</button>
+    <button type="button" onClick={install}>重启并安装</button>
     <button className="dismiss-update" aria-label="收起更新提示" onClick={dismiss}><X size={14} /></button>
   </div>;
 }
