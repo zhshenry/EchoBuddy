@@ -44,6 +44,25 @@ test('starting audio does not wait for either the original caret or the speech w
   assert.equal(controller.blocksInstall(), false);
 });
 
+test('short dictation stops after two minutes of recording and finishes normally', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const { controller, writes } = setup();
+  controller.toggle();
+  const id = controller.snapshot().sessionId!;
+  t.mock.timers.tick(120_000);
+  assert.equal(controller.snapshot().phase, 'preparing');
+
+  controller.recording(id);
+  t.mock.timers.tick(119_999);
+  assert.equal(controller.snapshot().phase, 'recording');
+  t.mock.timers.tick(1);
+  assert.equal(controller.snapshot().phase, 'finishing');
+
+  await controller.complete(id, '到达听写时长上限。');
+  assert.deepEqual(writes, [['到达听写时长上限。', true]]);
+  assert.equal(controller.snapshot().phase, 'idle');
+});
+
 test('moved target leaves a recoverable transcript and blocks update installation', async () => {
   const { controller, writes, clipboard, next } = setup();
   controller.toggle();

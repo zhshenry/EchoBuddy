@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto';
-import type { DictationState } from '../shared/desktop';
+import { SHORT_DICTATION_MAX_SECONDS, type DictationState } from '../shared/desktop';
 import type { SpeechEngine } from './speech/engine';
 import type { WindowsInput, WriteResult } from './windows-input';
 
-type Session = { id: string; target: Promise<boolean>; completing: boolean };
+type Session = { id: string; target: Promise<boolean>; completing: boolean; stopTimer?: NodeJS.Timeout };
 
 export class Dictation {
   private state: DictationState = { phase: 'idle', sessionId: null, pending: '', message: '', reveal: 0 };
@@ -23,6 +23,7 @@ export class Dictation {
   toggle(shortcut?: string): void {
     if (this.state.phase === 'finishing' || this.writing) return;
     if (this.session) {
+      clearTimeout(this.session.stopTimer);
       this.set({ phase: 'finishing' });
       return;
     }
@@ -37,7 +38,13 @@ export class Dictation {
   }
 
   recording(id: string): void {
-    if (id === this.session?.id && this.state.phase === 'preparing') this.set({ phase: 'recording' });
+    const session = this.session;
+    if (!session || session.id !== id || this.state.phase !== 'preparing') return;
+    session.stopTimer = setTimeout(() => {
+      if (this.session === session) this.toggle();
+    }, SHORT_DICTATION_MAX_SECONDS * 1000);
+    session.stopTimer.unref();
+    this.set({ phase: 'recording' });
   }
 
   transcribe(id: string, audio: Uint8Array): Promise<string> {
@@ -48,6 +55,7 @@ export class Dictation {
   async complete(id: string, transcript: string, error = ''): Promise<void> {
     const session = this.session;
     if (!session || session.id !== id || session.completing) return;
+    clearTimeout(session.stopTimer);
     session.completing = true;
     this.set({ phase: 'finishing' });
     const text = transcript.trim();
@@ -90,7 +98,7 @@ export class Dictation {
     } catch { this.set({ message: '复制未完成，请重试。' }); }
   }
 
-  clearMessage(): void { this.set({ message: '' }); }
+  showMessage(message: string): void { this.set({ message }); }
 
   private set(changes: Partial<DictationState>): void {
     this.state = { ...this.state, ...changes };

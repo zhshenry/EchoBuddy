@@ -393,9 +393,15 @@ static std::wstring decodeText(const std::string& hex) {
 static const char* insertText(IUIAutomation* automation, DWORD appPid, const Target* saved, const std::wstring& text,
     const ChatTargetWatch& watch) {
     if (text.empty()) return "unavailable";
-    const ULONGLONG pasteDeadline = GetTickCount64() + 2900;
-    for (int attempt = 0; attempt < 30 && modifiersDown(); ++attempt) Sleep(10);
-    if (modifiersDown()) return "unavailable";
+    const ULONGLONG started = GetTickCount64();
+    const ULONGLONG pasteDeadline = started + 2900;
+    // The stop shortcut fires on keydown, and a ready transcript can arrive before keyup.
+    const ULONGLONG releaseDeadline = started + 1500;
+    while (modifiersDown()) {
+        if (saved && GetForegroundWindow() != saved->foreground) return "moved";
+        if (GetTickCount64() >= releaseDeadline) return "unavailable";
+        Sleep(10);
+    }
 
     Target current = capture(automation, appPid);
     if (!current.foreground || (saved && !sameTarget(automation, *saved, current, watch))) return "moved";

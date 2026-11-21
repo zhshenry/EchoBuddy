@@ -1,3 +1,7 @@
+import type { RecognitionLanguage } from './speech-contracts';
+
+export const SHORT_DICTATION_MAX_SECONDS = 120;
+
 export type DictationPhase = 'idle' | 'preparing' | 'recording' | 'finishing';
 export interface DictationState {
   phase: DictationPhase;
@@ -7,10 +11,20 @@ export interface DictationState {
   reveal: number;
 }
 
+export type RecordingMode = 'dictation' | 'meeting';
+export const AVAILABLE_RECORDING_MODES: readonly RecordingMode[] = ['dictation'];
+export type SettingsPage = 'voice' | 'appearance' | 'shortcuts' | 'updates';
+
+export function resolveSettingsPage(value: unknown): SettingsPage {
+  return value === 'appearance' || value === 'shortcuts' || value === 'updates' ? value : 'voice';
+}
+
 export interface Preferences {
   avatar: string;
   shortcut: string;
   shortcutActive: boolean;
+  recordingMode: RecordingMode;
+  languages: RecognitionLanguage[];
 }
 
 export interface UpdateStatus {
@@ -29,6 +43,7 @@ export interface DesktopSnapshot {
 }
 
 export type OverlayPointer = { x: number; y: number } | null;
+export type LanguagePanelAnchor = { left: number; right: number; top: number; bottom: number };
 
 export interface DesktopBridge {
   snapshot(): Promise<DesktopSnapshot>;
@@ -40,6 +55,13 @@ export interface DesktopBridge {
   copyPending(): Promise<void>;
   clearMessage(): Promise<void>;
   resize(height: number): void;
+  toggleLanguagePanel(anchor: LanguagePanelAnchor, keyboard: boolean): Promise<void>;
+  closeLanguagePanel(): Promise<void>;
+  openSettings(page?: SettingsPage): Promise<void>;
+  minimizeSettings(): Promise<void>;
+  closeSettings(): Promise<void>;
+  setRecordingMode(mode: RecordingMode): Promise<void>;
+  toggleLanguage(language: RecognitionLanguage): Promise<void>;
   setAvatar(avatar: string): Promise<boolean>;
   beginShortcut(): Promise<boolean>;
   finishShortcut(shortcut?: string): Promise<string | null>;
@@ -48,6 +70,8 @@ export interface DesktopBridge {
   releases(): Promise<void>;
   onDictation(handle: (state: DictationState) => void): () => void;
   onPreferences(handle: (state: Preferences) => void): () => void;
+  onLanguagePanel(handle: (open: boolean) => void): () => void;
+  onSettingsPage(handle: (page: SettingsPage) => void): () => void;
   onUpdate(handle: (state: UpdateStatus) => void): () => void;
   onOverlayPointer(handle: (point: OverlayPointer) => void): () => void;
   onShortcutCancelled(handle: () => void): () => void;

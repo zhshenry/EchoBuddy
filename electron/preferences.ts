@@ -1,9 +1,11 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { isBotAvatar } from '../shared/bot-avatar';
+import { AVAILABLE_RECORDING_MODES, type Preferences } from '../shared/desktop';
+import { RECOGNITION_LANGUAGES } from '../shared/speech-contracts';
 
 export const defaultShortcut = 'Ctrl+Alt+M';
-export type SavedPreferences = { avatar: string; shortcut: string; position?: { x: number; y: number } };
+export type SavedPreferences = Omit<Preferences, 'shortcutActive'> & { position?: { x: number; y: number } };
 
 export function validShortcut(value: unknown): value is string {
   if (typeof value !== 'string') return false;
@@ -14,15 +16,22 @@ export function validShortcut(value: unknown): value is string {
 }
 
 export function loadPreferences(path: string): SavedPreferences {
+  const defaults: SavedPreferences = {
+    avatar: 'drop:coral', shortcut: defaultShortcut, recordingMode: 'dictation', languages: [...RECOGNITION_LANGUAGES],
+  };
   try {
     const saved = JSON.parse(readFileSync(path, 'utf8'));
     const position = saved.position;
+    const languages = Array.isArray(saved.languages)
+      ? RECOGNITION_LANGUAGES.filter(language => saved.languages.includes(language)) : [];
     return {
-      avatar: isBotAvatar(saved.avatar) ? saved.avatar : 'drop:coral',
+      avatar: isBotAvatar(saved.avatar) ? saved.avatar : defaults.avatar,
       shortcut: validShortcut(saved.shortcut) ? saved.shortcut : defaultShortcut,
+      recordingMode: AVAILABLE_RECORDING_MODES.includes(saved.recordingMode) ? saved.recordingMode : defaults.recordingMode,
+      languages: languages.length ? languages : defaults.languages,
       position: position && Number.isInteger(position.x) && Number.isInteger(position.y) ? position : undefined,
     };
-  } catch { return { avatar: 'drop:coral', shortcut: defaultShortcut }; }
+  } catch { return defaults; }
 }
 
 export function savePreferences(path: string, preferences: SavedPreferences): void {

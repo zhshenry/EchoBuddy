@@ -85,7 +85,7 @@ export function createOverlay(
     window, trackPointer,
     resize(value: number) {
       if (!Number.isFinite(value)) return;
-      const next = Math.min(450, Math.max(minHeight, Math.ceil(value)));
+      const next = Math.min(480, Math.max(minHeight, Math.ceil(value)));
       if (next !== height) { height = next; place(); }
     },
   };

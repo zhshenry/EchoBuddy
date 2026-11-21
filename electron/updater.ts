@@ -15,7 +15,7 @@ export class AppUpdates {
     private readonly blocksInstall: () => boolean,
   ) {
     this.state = { current, enabled: !!driver, phase: 'idle', version: '', progress: 0,
-      message: driver ? '启动后自动检查，每 4 小时检查一次。' : '安装版支持自动更新。' };
+      message: driver ? '启动后自动检查，每 4 小时检查一次。' : '' };
     if (!driver) return;
     driver.autoDownload = true;
     driver.autoInstallOnAppQuit = false;

@@ -1,11 +1,13 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
-import { ChatCircleDots, GearSix, Microphone, PencilSimple, Stop, X } from '@phosphor-icons/react';
+import { ArrowUpRight, ChatCircleDots, GearSix, Microphone, Stop, X } from '@phosphor-icons/react';
 import { botAvatarChoice, botAvatarColors } from '../shared/bot-avatar';
 import type { DesktopSnapshot } from '../shared/desktop';
+import { RECOGNITION_LANGUAGES } from '../shared/speech-contracts';
 import { BotAvatar } from './avatars/BotAvatar';
 import { useCapture } from './audio/useCapture';
-import { AvatarPicker } from './widget/AvatarPicker';
+import { SettingsWindow } from './widget/SettingsWindow';
+import { LanguagePanel, LanguageSelector, RecordingOptions, WriteOptions } from './widget/SpeechOptions';
 import { UpdateNotice, UpdateSettings } from './widget/UpdateSettings';
 import './avatars/avatar.css';
 import './widget/widget.css';
@@ -13,28 +15,22 @@ import './widget/widget.css';
 const desktop = window.echoBuddy;
 const initial: DesktopSnapshot = {
   dictation: { phase: 'idle', sessionId: null, pending: '', message: '', reveal: 0 },
-  preferences: { avatar: 'drop:coral', shortcut: 'Ctrl+Alt+M', shortcutActive: true },
+  preferences: {
+    avatar: 'drop:coral', shortcut: 'Ctrl+Alt+M', shortcutActive: true,
+    recordingMode: 'dictation', languages: [...RECOGNITION_LANGUAGES],
+  },
   update: { current: '', enabled: false, phase: 'idle', message: '', progress: 0, version: '' },
 };
 const phaseText = { idle: '待机', preparing: '正在打开麦克风', recording: '录音中', finishing: '正在转写' };
 type Pane = 'settings' | 'transcript' | null;
 
-function combination(event: KeyboardEvent): string {
-  const key = event.code.replace(/^(Key|Digit)/, '');
-  if (!/^(?:[A-Z0-9]|F(?:[1-9]|1[0-2])|Space)$/.test(key)) return '';
-  if (!(event.ctrlKey || event.altKey || event.shiftKey || event.metaKey || /^F\d/.test(key))) return '';
-  return [event.ctrlKey && 'Ctrl', event.altKey && 'Alt', event.shiftKey && 'Shift', event.metaKey && 'Win', key].filter(Boolean).join('+');
-}
-
 function PanelTransition({ open, id, children }: { open: boolean; id?: string; children: ReactNode }) {
   return <div className="panel-transition" id={id} inert={!open}>{children}</div>;
 }
 
-function App() {
-  const [{ dictation, preferences, update }, setSnapshot] = useState(initial);
+function App({ dictation, preferences, update }: DesktopSnapshot) {
   const [pane, setPane] = useState<Pane>(null);
-  const [binding, setBinding] = useState(false);
-  const [bindingError, setBindingError] = useState('');
+  const [languagesOpen, setLanguagesOpen] = useState(false);
   const [dismissed, setDismissed] = useState('');
   const shell = useRef<HTMLElement>(null);
   const liveText = useRef<HTMLDivElement>(null);
@@ -43,18 +39,8 @@ function App() {
   const busy = phase !== 'idle';
   const recording = phase === 'recording';
   const canStop = recording || phase === 'preparing';
-  const updateBlocked = busy ? '本次听写完成后可安装' : pending ? '请先写入或复制本次转写' : binding ? '请先完成快捷键设置' : '';
-
-  useEffect(() => {
-    const subscriptions = [
-      desktop.onDictation(value => setSnapshot(old => ({ ...old, dictation: value }))),
-      desktop.onPreferences(value => setSnapshot(old => ({ ...old, preferences: value }))),
-      desktop.onUpdate(value => setSnapshot(old => ({ ...old, update: value }))),
-      desktop.onShortcutCancelled(() => setBinding(false)),
-    ];
-    void desktop.snapshot().then(setSnapshot);
-    return () => subscriptions.forEach(unsubscribe => unsubscribe());
-  }, []);
+  const meeting = preferences.recordingMode === 'meeting';
+  const updateBlocked = busy ? '本次听写完成后可安装' : pending ? '请先写入或复制本次转写' : '';
   useLayoutEffect(() => {
     const element = shell.current!;
     const observer = new ResizeObserver(() => {
@@ -67,6 +53,7 @@ function App() {
   useEffect(() => {
     if (reveal && pending) setPane('transcript');
   }, [reveal, pending]);
+  useEffect(() => desktop.onLanguagePanel(setLanguagesOpen), []);
   useEffect(() => {
     if (pane === 'transcript' && liveText.current) liveText.current.scrollTop = liveText.current.scrollHeight;
   }, [pane, lines, draft]);
@@ -76,48 +63,33 @@ function App() {
     return () => window.clearTimeout(timer);
   }, [message, pending]);
 
-  function cancelBinding() {
-    if (!binding) return;
-    setBinding(false);
-    void desktop.finishShortcut();
-  }
   function togglePane(value: Exclude<Pane, null>) {
-    cancelBinding();
+    if (languagesOpen) void desktop.closeLanguagePanel();
     setPane(old => old === value ? null : value);
   }
   useEffect(() => {
     function keydown(event: KeyboardEvent) {
-      if (event.repeat || event.isComposing) return;
-      if (event.key === 'Escape') {
-        if (binding) { event.preventDefault(); cancelBinding(); }
-        else if (pane) { event.preventDefault(); setPane(null); }
-        return;
-      }
-      const shortcut = binding && combination(event);
-      if (!shortcut) return;
+      if (event.key !== 'Escape' || !pane) return;
       event.preventDefault();
-      setBinding(false);
-      void desktop.finishShortcut(shortcut).then(error => setBindingError(error ?? ''));
+      if (languagesOpen) void desktop.closeLanguagePanel();
+      else setPane(null);
     }
     window.addEventListener('keydown', keydown);
     return () => window.removeEventListener('keydown', keydown);
-  }, [binding, pane]);
-
-  async function editShortcut() {
-    setBindingError('');
-    if (binding) { cancelBinding(); return; }
-    if (await desktop.beginShortcut()) setBinding(true);
-  }
+  }, [languagesOpen, pane]);
 
   const label = phase === 'preparing' ? '取消准备' : recording ? '结束录音并写入' : phase === 'finishing' ? '正在转写'
-    : pending ? '查看待写入文字' : '开始听写';
+    : pending ? '查看待写入文字' : meeting ? '会议录音待接入' : '开始听写';
   const { color } = botAvatarChoice(preferences.avatar);
   const palette = botAvatarColors.find(item => item.id === color)!;
-  return <section className="shell" ref={shell} aria-label="EchoBuddy 听写浮窗" data-phase={phase}>
-    <div className="bar" style={{
-      '--accent': palette.lo, '--tint': palette.soft,
-      '--power-ink': color === 'yellow' ? palette.deep : 'white',
-    } as CSSProperties}>
+  return <section className="shell" ref={shell} aria-label="EchoBuddy 听写浮窗" data-phase={phase}
+    onPointerDown={event => {
+      if (languagesOpen && event.target instanceof Element && !event.target.closest('.language-selector')) void desktop.closeLanguagePanel();
+    }} style={{
+    '--accent': palette.lo, '--tint': palette.soft,
+    '--power-ink': color === 'yellow' ? palette.deep : 'white',
+  } as CSSProperties}>
+    <div className="bar">
       <div className="tools">
         <BotAvatar avatar={preferences.avatar} motionId="echobuddy-dictation"
           activity={recording ? 'working' : busy ? 'thinking' : 'idle'} />
@@ -131,23 +103,31 @@ function App() {
         <button type="button" className="tool" aria-label="转写气泡" title="显示或收起转写" aria-expanded={pane === 'transcript'} aria-controls="transcript-panel"
           onClick={() => togglePane('transcript')}><ChatCircleDots size={22} /></button>
       </div>
-      <button type="button" className="power" disabled={phase === 'finishing' || binding} aria-label={label}
+      <button type="button" className="power" disabled={phase === 'finishing'} aria-label={label}
         title={label + ' · ' + preferences.shortcut} onClick={() => void desktop.toggle()}>
         {canStop ? <Stop size={19} weight="fill" /> : <Microphone size={22} weight="bold" />}
       </button>
     </div>
     <PanelTransition id="settings-panel" open={pane === 'settings'}>
-      <div className="panel settings">
-        <div className="row">
-          <strong>听写快捷键</strong>
-          <button className="key-button" aria-label="修改快捷键" aria-pressed={binding} disabled={busy} onClick={() => void editShortcut()}>
-            {binding ? '按下新组合键' : <span className="keys">{preferences.shortcut.split('+').map(key => <kbd key={key}>{key}</kbd>)}</span>}
-            <PencilSimple size={14} />
+      <div className="panel inline-settings" onScroll={() => { if (languagesOpen) void desktop.closeLanguagePanel(); }}>
+        <div className="row inline-settings-heading">
+          <h2>设置</h2>
+          <button type="button" className="more-settings-button" title="打开更多设置" onClick={() => void desktop.openSettings()}>
+            更多设置 <ArrowUpRight size={13} aria-hidden="true" />
           </button>
         </div>
-        {(bindingError || (!binding && !preferences.shortcutActive)) &&
-          <p className="shortcut-error" role="status">{bindingError || '快捷键已被占用，请换一组。'}</p>}
-        <AvatarPicker avatar={preferences.avatar} />
+        <section className="settings-section settings-inline-row">
+          <h3>录音模式</h3>
+          <RecordingOptions mode={preferences.recordingMode} busy={busy} />
+        </section>
+        <section className="settings-section settings-inline-row">
+          <h3>写入时机</h3>
+          <WriteOptions />
+        </section>
+        <section className="settings-section settings-inline-row">
+          <h3>识别语言</h3>
+          <LanguageSelector languages={preferences.languages} open={languagesOpen} />
+        </section>
         <UpdateSettings update={update} blocked={updateBlocked} />
       </div>
     </PanelTransition>
@@ -164,16 +144,38 @@ function App() {
         </div>}
       </div>
     </PanelTransition>
-    {!busy && message && <PanelTransition open={pane !== 'settings'}>
+    {!busy && message && <PanelTransition open={pane !== 'settings' || meeting}>
       <div className="message" role="status">
         <span>{message}</span><button aria-label="收起听写提示" onClick={() => void desktop.clearMessage()}><X size={14} /></button>
       </div>
     </PanelTransition>}
-    {!updateBlocked && !message && update.phase === 'ready' && dismissed !== update.version &&
+    {!busy && !pending && !message && update.phase === 'ready' && dismissed !== update.version &&
       <PanelTransition open={pane === null}>
-        <UpdateNotice version={update.version} open={() => setPane('settings')} dismiss={() => setDismissed(update.version)} />
+        <UpdateNotice version={update.version} open={() => void desktop.openSettings('updates')} dismiss={() => setDismissed(update.version)} />
       </PanelTransition>}
   </section>;
 }
 
-createRoot(document.getElementById('root')!).render(<App />);
+const params = new URLSearchParams(window.location.search);
+const view = params.get('view');
+if (view === 'settings') document.body.classList.add('settings-host');
+if (view === 'languages') document.body.classList.add('language-panel-host');
+
+function Root() {
+  const [snapshot, setSnapshot] = useState(initial);
+  useEffect(() => {
+    const subscriptions = [
+      desktop.onDictation(value => setSnapshot(old => ({ ...old, dictation: value }))),
+      desktop.onPreferences(value => setSnapshot(old => ({ ...old, preferences: value }))),
+      desktop.onUpdate(value => setSnapshot(old => ({ ...old, update: value }))),
+    ];
+    void desktop.snapshot().then(setSnapshot);
+    return () => subscriptions.forEach(unsubscribe => unsubscribe());
+  }, []);
+  if (view === 'settings') return <SettingsWindow {...snapshot} />;
+  if (view === 'languages') return <LanguagePanel preferences={snapshot.preferences}
+    placement={params.get('placement') === 'above' ? 'above' : 'below'} tip={Number(params.get('tip')) || 0} />;
+  return <App {...snapshot} />;
+}
+
+createRoot(document.getElementById('root')!).render(<Root />);

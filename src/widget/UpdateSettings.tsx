@@ -1,7 +1,9 @@
 import { ArrowUpRight, DownloadSimple, Waveform, X } from '@phosphor-icons/react';
 import type { UpdateStatus } from '../../shared/desktop';
 
-export function UpdateSettings({ update, blocked }: { update: UpdateStatus; blocked: string }) {
+export function UpdateSettings({ update, blocked, showReleaseLink = false }: {
+  update: UpdateStatus; blocked: string; showReleaseLink?: boolean;
+}) {
   const ready = update.phase === 'ready';
   const checking = update.phase === 'checking';
   const downloading = update.phase === 'downloading';
@@ -17,10 +19,13 @@ export function UpdateSettings({ update, blocked }: { update: UpdateStatus; bloc
         disabled={!update.enabled || checking || downloading || (ready && !!blocked)}
         onClick={() => void (ready ? desktop.installUpdate() : desktop.checkUpdate())}>{action}</button>
     </div>
-    <div className="row update-meta">
+    {(update.message || showReleaseLink) && <div className="row update-meta">
       <span role="status">{update.message}</span>
-      <button className="release-link" onClick={() => void desktop.releases()} title="打开 GitHub Releases">发布页 <ArrowUpRight size={13} /></button>
-    </div>
+      {showReleaseLink && <button type="button" className="release-link"
+        onClick={() => void desktop.releases()} title="在 GitHub 查看更新日志">
+        更新日志 <ArrowUpRight size={13} aria-hidden="true" />
+      </button>}
+    </div>}
     {downloading && <progress aria-label="更新下载进度" value={update.progress} max={100} />}
     {ready && blocked && <p className="update-hold">{blocked}</p>}
   </section>;
