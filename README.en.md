@@ -14,7 +14,8 @@
 
 - **Type at your cursor.** Choose to insert text in batches while you speak or all at once when you stop. If you move the cursor or switch input fields, the remaining text stays in the transcript bubble for you to insert or copy.
 - **Dictate offline.** EchoBuddy transcribes microphone audio on your device, so dictation works without an internet connection.
-- **See words as you speak.** Click the speech bubble to show the live transcript.
+- **See words as you speak.** In dictation mode, click the speech bubble to show the live transcript.
+- **Record meetings.** Switch to Meeting Recording in the floating bar settings to capture the microphone, computer audio, or both. WAV files stay on your device. Open More Settings → Meeting Records to read the offline transcript with speaker labels and click a timestamp to jump to the audio.
 - **Make the floating bar yours.** Drag the avatar or waveform to move the bar. It can collapse at the left, right, or top edge of the screen, where you can still start or stop recording. Adjust edge docking, the avatar, colors, or the shortcut in Settings.
 - **Update from the app.** EchoBuddy checks for updates in the background. You can also check in Settings and choose when to restart and install a downloaded update.
 

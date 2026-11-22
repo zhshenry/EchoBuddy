@@ -42,3 +42,16 @@ export function dockBounds(area: Rectangle, dock: DockPlacement, expandedHeight:
   const y = top ? area.y : area.y + area.height * dock.offset - (compact ? height : overlayMinHeight) / 2;
   return fitOverlay({ x, y, width, height }, area);
 }
+
+export function dockWindowLayout(area: Rectangle, dock: DockPlacement, expandedHeight: number) {
+  const small = dockBounds(area, dock, expandedHeight, true);
+  const large = dockBounds(area, dock, expandedHeight, false);
+  const x = Math.min(small.x, large.x), y = Math.min(small.y, large.y);
+  const width = Math.max(small.x + small.width, large.x + large.width) - x;
+  const height = Math.max(small.y + small.height, large.y + large.height) - y;
+  return {
+    frame: { x, y, width, height },
+    compact: { ...small, x: small.x - x, y: small.y - y },
+    expanded: { ...large, x: large.x - x, y: large.y - y },
+  };
+}

@@ -1,7 +1,7 @@
 import { BrowserWindow, screen, systemPreferences, type Point } from 'electron';
-import type { DockMotion, DockPlacement, OverlayDock, OverlayPointer } from '../shared/desktop';
+import type { DockPlacement, OverlayDock, OverlayPointer } from '../shared/desktop';
 import type { SavedPreferences } from './preferences';
-import { dockAfterDrag, dockBounds, fitOverlay, overlayMinHeight as minHeight, overlayWidth as width } from './overlay-position';
+import { dockAfterDrag, dockBounds, dockWindowLayout, fitOverlay, overlayMinHeight as minHeight, overlayWidth as width } from './overlay-position';
 
 export function createOverlay(
   preload: string, icon: string, saved: Pick<SavedPreferences, 'position' | 'dock' | 'dockOnEdge'>,
@@ -18,7 +18,8 @@ export function createOverlay(
   let outsideSince: number | undefined;
   let panelOpen = false;
   let needsAttention = false;
-  let motion: DockMotion | undefined;
+  let layout: ReturnType<typeof dockWindowLayout> | undefined;
+  let motion: number | undefined;
   let motionTimer: NodeJS.Timeout | undefined;
   let motionId = 0;
 
@@ -34,9 +35,7 @@ export function createOverlay(
   window.setAlwaysOnTop(true, 'floating');
 
   function snapshot(): OverlayDock {
-    if (!dock) return null;
-    if (motion) return { side: dock.side, compact, motion };
-    return { side: dock.side, compact, ...(compact && { compactBounds: dockFrame(dock).compact }) };
+    return dock && layout ? { side: dock.side, compact, layout: { compact: layout.compact, expanded: layout.expanded }, motion } : null;
   }
   function publishDock() { window.webContents.send('overlay:dock', snapshot()); }
 
@@ -44,18 +43,15 @@ export function createOverlay(
     return screen.getAllDisplays().find(item => item.id === dock?.displayId) ?? screen.getPrimaryDisplay();
   }
 
-  function dockFrame(placement: DockPlacement) {
-    const { workArea } = dockDisplay();
-    const small = dockBounds(workArea, placement, height, true);
-    const large = dockBounds(workArea, placement, height, false);
-    const x = Math.min(small.x, large.x), y = Math.min(small.y, large.y);
-    const frameWidth = Math.max(small.x + small.width, large.x + large.width) - x;
-    const frameHeight = Math.max(small.y + small.height, large.y + large.height) - y;
-    return {
-      frame: { x, y, width: frameWidth, height: frameHeight },
-      compact: { ...small, x: small.x - x, y: small.y - y },
-      expanded: { ...large, x: large.x - x, y: large.y - y },
-    };
+  function windowRegion() {
+    return layout && (motion ? undefined : compact ? layout.compact : layout.expanded);
+  }
+
+  function applyShape() {
+    const region = windowRegion(), frame = layout?.frame;
+    // Keep the transparent viewport in place between poses. Resizing it here can
+    // expose a frame with the old layout before Chromium repaints.
+    window.setShape(region && frame && (region.width !== frame.width || region.height !== frame.height) ? [region] : []);
   }
 
   function place() {
@@ -68,14 +64,19 @@ export function createOverlay(
       dock = { ...dock, displayId: activeDisplay.id };
       remember(anchor, dock);
     }
-    const bounds = dock ? dockBounds(workArea, dock, height, compact) : fitOverlay({ ...anchor, width, height }, workArea);
-    window.setMinimumSize(bounds.width, compact ? bounds.height : Math.min(minHeight, bounds.height));
+    const wasDocked = !!layout;
+    layout = dock ? dockWindowLayout(workArea, dock, height) : undefined;
+    const bounds = layout?.frame ?? fitOverlay({ ...anchor, width, height }, workArea);
+    window.setMinimumSize(bounds.width, Math.min(minHeight, bounds.height));
     window.setBounds(bounds);
+    if (layout || wasDocked) applyShape();
   }
 
   function finishDockMotion(id: number) {
-    if (motion?.id !== id) return;
-    place();
+    if (motion !== id) return;
+    clearTimeout(motionTimer);
+    motion = undefined;
+    applyShape();
     publishDock();
     syncPointerTracking();
   }
@@ -87,17 +88,14 @@ export function createOverlay(
     outsideSince = undefined;
     if (window.isVisible() && !systemPreferences.getAnimationSettings().prefersReducedMotion) {
       const id = ++motionId;
-      if (motion) motion = { ...motion, id };
-      else {
-        const { frame, ...layouts } = dockFrame(dock);
-        motion = { id, ...layouts };
-        // Leave room for both shapes until the renderer finishes the transition.
-        window.setMinimumSize(frame.width, Math.min(minHeight, frame.height));
-        window.setBounds(frame);
-      }
+      motion = id;
       clearTimeout(motionTimer);
       motionTimer = setTimeout(() => finishDockMotion(id), 450);
-    } else place();
+    } else {
+      clearTimeout(motionTimer);
+      motion = undefined;
+    }
+    applyShape();
     publishDock();
     syncPointerTracking();
   }
@@ -114,7 +112,8 @@ export function createOverlay(
     function sample() {
       const cursor = screen.getCursorScreenPoint(), bounds = window.getContentBounds();
       const x = cursor.x - bounds.x, y = cursor.y - bounds.y;
-      const inside = x >= 0 && y >= 0 && x < bounds.width && y < bounds.height;
+      const region = windowRegion() ?? { x: 0, y: 0, width: bounds.width, height: bounds.height };
+      const inside = x >= region.x && y >= region.y && x < region.x + region.width && y < region.y + region.height;
       let point: OverlayPointer = null;
       if (trackingPointer && inside) {
         const zoom = window.webContents.getZoomFactor();
@@ -146,11 +145,11 @@ export function createOverlay(
   }
   window.on('show', syncPointerTracking);
   window.on('hide', () => {
-    if (motion) finishDockMotion(motion.id);
+    if (motion) finishDockMotion(motion);
     clearTimeout(pointerTimer);
   });
   window.webContents.on('did-start-loading', () => {
-    if (motion) finishDockMotion(motion.id);
+    if (motion) finishDockMotion(motion);
     panelOpen = false;
     trackPointer(false);
   });
@@ -160,7 +159,8 @@ export function createOverlay(
   window.on('moved', () => {
     if (!dragging) return;
     dragging = false;
-    const bounds = window.getBounds();
+    const frame = window.getBounds(), expanded = layout?.expanded;
+    const bounds = expanded ? { ...expanded, x: frame.x + expanded.x, y: frame.y + expanded.y } : frame;
     anchor = { x: bounds.x, y: bounds.y };
     dock = dockOnEdge ? dockAfterDrag(bounds, screen.getDisplayMatching(bounds), dock) : undefined;
     compact = false;
@@ -172,11 +172,9 @@ export function createOverlay(
     syncPointerTracking();
   });
   function displayChanged() {
-    if (motion) finishDockMotion(motion.id);
-    else {
-      place();
-      if (dock && compact) publishDock();
-    }
+    place();
+    if (dock) publishDock();
+    syncPointerTracking();
   }
   screen.on('display-removed', displayChanged);
   screen.on('display-metrics-changed', displayChanged);
@@ -215,11 +213,14 @@ export function createOverlay(
       syncPointerTracking();
     },
     resize(value: number) {
-      if (!Number.isFinite(value)) return;
+      if (motion || !Number.isFinite(value)) return;
       const next = Math.min(480, Math.max(minHeight, Math.ceil(value)));
       if (next !== height) {
         height = next;
-        if (!compact && !dragging && !motion) place();
+        if (!compact && !dragging) {
+          place();
+          if (dock) publishDock();
+        }
       }
     },
   };

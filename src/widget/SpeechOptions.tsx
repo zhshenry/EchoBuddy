@@ -1,7 +1,8 @@
 import { useEffect, useRef, type CSSProperties } from 'react';
-import { CaretDown, X } from '@phosphor-icons/react';
+import { CaretDown, Check, X } from '@phosphor-icons/react';
 import { botAvatarChoice, botAvatarColors } from '../../shared/bot-avatar';
 import { AVAILABLE_RECORDING_MODES, SHORT_DICTATION_MAX_SECONDS, type Preferences, type RecordingMode, type WriteTiming } from '../../shared/desktop';
+import { MEETING_MAX_SECONDS, MEETING_SOURCES, MEETING_SOURCE_NAMES, type MeetingSource } from '../../shared/meeting-contracts';
 import { RECOGNITION_LANGUAGES, type RecognitionLanguage } from '../../shared/speech-contracts';
 
 const languageNames: Record<RecognitionLanguage, string> = {
@@ -10,11 +11,11 @@ const languageNames: Record<RecognitionLanguage, string> = {
 
 const modes = [
   { id: 'dictation', label: '短听写', detail: `最多 ${SHORT_DICTATION_MAX_SECONDS / 60} 分钟，到时自动转写` },
-  { id: 'meeting', label: '会议录音', detail: '最长可录 2 小时，功能待接入' },
+  { id: 'meeting', label: '会议录音', detail: `最长可录 ${MEETING_MAX_SECONDS / 3600} 小时，到时自动保存` },
 ] as const;
 
 export function RecordingOptions({ mode, busy }: { mode: RecordingMode; busy: boolean }) {
-  return <fieldset className="segmented-options mode-options" disabled={busy}>
+  return <fieldset className="segmented-options mode-options recording-mode-options" data-mode={mode} disabled={busy}>
     <legend className="visually-hidden">录音模式</legend>
     {modes.map(item => <label key={item.id} title={item.detail}>
       <input className="visually-hidden" type="radio" name="recording-mode" value={item.id} checked={mode === item.id}
@@ -22,6 +23,23 @@ export function RecordingOptions({ mode, busy }: { mode: RecordingMode; busy: bo
         onChange={() => void window.echoBuddy.setRecordingMode(item.id)} />
       <span>{item.label}</span>
     </label>)}
+  </fieldset>;
+}
+
+export function MeetingSourceOptions({ sources, busy }: { sources: MeetingSource[]; busy: boolean }) {
+  return <fieldset className="segmented-options mode-options meeting-source-options" disabled={busy}>
+    <legend className="visually-hidden">会议录音来源</legend>
+    {MEETING_SOURCES.map(source => {
+      const checked = sources.includes(source);
+      const locked = checked && sources.length === 1;
+      const description = locked ? '至少保留一个录音来源' : source === 'system' ? '包含耳机和扬声器正在播放的声音' : '使用系统默认麦克风';
+      return <label key={source} title={description}>
+        <input className="visually-hidden" type="checkbox" checked={checked} aria-disabled={locked || undefined}
+          onChange={() => { if (!locked) void window.echoBuddy.toggleMeetingSource(source); }} />
+        {checked && <Check size={11} weight="bold" aria-hidden="true" />}
+        <span>{MEETING_SOURCE_NAMES[source]}</span>
+      </label>;
+    })}
   </fieldset>;
 }
 

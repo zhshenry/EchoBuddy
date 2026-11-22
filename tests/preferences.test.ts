@@ -22,6 +22,7 @@ test('legacy settings keep the shortcut, avatar, and overlay position', t => {
   writeFileSync(file, JSON.stringify(legacy), 'utf8');
   assert.deepEqual(loadPreferences(file), {
     ...legacy, recordingMode: 'dictation', writeTiming: 'sentence', dockOnEdge: true, languages: [...RECOGNITION_LANGUAGES],
+    meetingSources: ['microphone'],
   });
 });
 
@@ -50,16 +51,21 @@ test('streaming write timing is saved and unrecognized values use sentence mode'
   assert.equal(loadPreferences(file).writeTiming, 'sentence');
 });
 
-test('an unavailable recording mode falls back to short dictation and keeps the saved languages', t => {
+test('meeting mode and selected sources persist, and unknown or empty choices use safe defaults', t => {
   const file = testSettings(t);
   const saved = loadPreferences(file);
   saved.recordingMode = 'meeting';
+  saved.meetingSources = ['system'];
   saved.languages = ['zh', 'en'];
   savePreferences(file, saved);
   const reloaded = loadPreferences(file);
-  assert.equal(reloaded.recordingMode, 'dictation');
+  assert.equal(reloaded.recordingMode, 'meeting');
+  assert.deepEqual(reloaded.meetingSources, ['system']);
   assert.deepEqual(reloaded.languages, ['zh', 'en']);
 
-  writeFileSync(file, JSON.stringify({ ...saved, languages: [] }), 'utf8');
-  assert.deepEqual(loadPreferences(file).languages, [...RECOGNITION_LANGUAGES]);
+  writeFileSync(file, JSON.stringify({ ...saved, recordingMode: 'unknown', languages: [], meetingSources: ['unknown'] }), 'utf8');
+  const fallback = loadPreferences(file);
+  assert.equal(fallback.recordingMode, 'dictation');
+  assert.deepEqual(fallback.meetingSources, ['microphone']);
+  assert.deepEqual(fallback.languages, [...RECOGNITION_LANGUAGES]);
 });

@@ -3,26 +3,30 @@ import { createRoot } from 'react-dom/client';
 import { CaretDown, CaretLeft, CaretRight, ChatCircleDots, Circle, GearSix, Microphone, Stop, X } from '@phosphor-icons/react';
 import { botAvatarChoice, botAvatarColors } from '../shared/bot-avatar';
 import type { DesktopSnapshot } from '../shared/desktop';
+import { initialMeetingCapture } from '../shared/meeting-contracts';
 import { RECOGNITION_LANGUAGES } from '../shared/speech-contracts';
 import { BotAvatar } from './avatars/BotAvatar';
 import { useCapture } from './audio/useCapture';
 import { SettingsWindow } from './widget/SettingsWindow';
-import { LanguagePanel, LanguageSelector, RecordingOptions, WriteOptions } from './widget/SpeechOptions';
+import { LanguagePanel, LanguageSelector, MeetingSourceOptions, RecordingOptions, WriteOptions } from './widget/SpeechOptions';
 import { UpdateNotice, UpdateSettings } from './widget/UpdateSettings';
 import './avatars/avatar.css';
 import './widget/widget.css';
+import './widget/meeting.css';
 
 const desktop = window.echoBuddy;
 const initial: DesktopSnapshot = {
   dictation: { phase: 'idle', sessionId: null, recordingStartedAt: null, pending: '', message: '', reveal: 0 },
+  meeting: initialMeetingCapture,
   preferences: {
     avatar: 'drop:coral', shortcut: 'Ctrl+Alt+M', shortcutActive: true,
-    recordingMode: 'dictation', writeTiming: 'sentence', languages: [...RECOGNITION_LANGUAGES], dockOnEdge: true,
+    recordingMode: 'dictation', writeTiming: 'sentence', meetingSources: ['microphone'], languages: [...RECOGNITION_LANGUAGES], dockOnEdge: true,
   },
   update: { current: '', enabled: false, phase: 'idle', message: '', progress: 0, version: '' },
   dock: null,
 };
 const phaseText = { idle: '待机', preparing: '正在打开麦克风', recording: '录音中', finishing: '正在转写' };
+const meetingPhaseText = { idle: '会议录音', preparing: '准备中', recording: '录音中', saving: '保存中' };
 type Pane = 'settings' | 'transcript' | null;
 
 function PanelTransition({ open, id, children }: { open: boolean; id?: string; children: ReactNode }) {
@@ -37,33 +41,35 @@ function DockClock({ startedAt }: { startedAt: number }) {
   }, []);
   const seconds = Math.max(0, Math.floor((time - startedAt) / 1000));
   const elapsed = [Math.floor(seconds / 60), seconds % 60].map(value => String(value).padStart(2, '0')).join(':');
-  return <span className="dock-status" title={'已录音 ' + elapsed}><Circle size={6} weight="fill" aria-hidden="true" />{elapsed}</span>;
+  return <span className="dock-status" data-long={seconds >= 6000} title={'已录音 ' + elapsed}><Circle size={6} weight="fill" aria-hidden="true" />{elapsed}</span>;
 }
 
-function App({ dictation, preferences, update, dock }: DesktopSnapshot) {
+function App({ dictation, meeting: capture, preferences, update, dock }: DesktopSnapshot) {
   const [pane, setPane] = useState<Pane>(null);
   const [languagesOpen, setLanguagesOpen] = useState(false);
   const [dismissed, setDismissed] = useState('');
   const shell = useRef<HTMLElement>(null);
   const liveText = useRef<HTMLDivElement>(null);
   const { levels, lines, draft } = useCapture(dictation, preferences.writeTiming);
-  const { phase, pending, message, reveal, recordingStartedAt } = dictation;
+  const { pending, message, reveal } = dictation;
+  const meeting = preferences.recordingMode === 'meeting';
+  const phase = meeting ? (capture.phase === 'saving' ? 'finishing' : capture.phase) : dictation.phase;
+  const recordingStartedAt = meeting ? capture.startedAt : dictation.recordingStartedAt;
   const busy = phase !== 'idle';
   const recording = phase === 'recording';
   const canStop = recording || phase === 'preparing';
-  const meeting = preferences.recordingMode === 'meeting';
   const compact = dock?.compact === true;
   const motion = dock?.motion;
   const panelOpen = pane !== null;
-  const updateBlocked = busy ? '本次听写完成后可安装' : pending ? '请先写入或复制本次转写' : '';
+  const updateBlocked = busy ? (meeting ? '会议录音保存后可安装' : '本次听写完成后可安装') : pending ? '请先写入或复制本次转写' : '';
   useLayoutEffect(() => {
     document.body.classList.toggle('compact-overlay', compact);
     const element = shell.current;
-    if (motion && window.matchMedia('(prefers-reduced-motion: reduce)').matches) desktop.finishDockMotion(motion.id);
+    if (motion && window.matchMedia('(prefers-reduced-motion: reduce)').matches) desktop.finishDockMotion(motion);
     if (compact || motion || !element) return;
     const observer = new ResizeObserver(() => {
-      const bottomPadding = Number.parseFloat(getComputedStyle(document.body).paddingBottom);
-      desktop.resize(element.getBoundingClientRect().bottom + bottomPadding);
+      const { paddingTop, paddingBottom } = getComputedStyle(document.body);
+      desktop.resize(element.getBoundingClientRect().height + Number.parseFloat(paddingTop) + Number.parseFloat(paddingBottom));
     });
     observer.observe(element);
     return () => observer.disconnect();
@@ -72,6 +78,9 @@ function App({ dictation, preferences, update, dock }: DesktopSnapshot) {
   useEffect(() => {
     if (reveal && pending) setPane('transcript');
   }, [reveal, pending]);
+  useEffect(() => {
+    if (meeting && !pending) setPane(previous => previous === 'transcript' ? null : previous);
+  }, [meeting, pending]);
   useEffect(() => desktop.onLanguagePanel(setLanguagesOpen), []);
   useEffect(() => {
     if (pane === 'transcript' && liveText.current) liveText.current.scrollTop = liveText.current.scrollHeight;
@@ -97,8 +106,10 @@ function App({ dictation, preferences, update, dock }: DesktopSnapshot) {
     return () => window.removeEventListener('keydown', keydown);
   }, [languagesOpen, pane]);
 
-  const label = phase === 'preparing' ? '取消准备' : recording ? '结束录音并写入' : phase === 'finishing' ? '正在转写'
-    : meeting ? '会议录音待接入' : '开始听写';
+  const label = phase === 'preparing' ? '取消准备'
+    : recording ? (meeting ? '停止会议录音' : '结束录音并写入')
+    : phase === 'finishing' ? (meeting ? '正在保存录音' : '正在转写')
+    : meeting ? '开始会议录音' : '开始听写';
   const { color } = botAvatarChoice(preferences.avatar);
   const palette = botAvatarColors.find(item => item.id === color)!;
   const theme = {
@@ -108,37 +119,50 @@ function App({ dictation, preferences, update, dock }: DesktopSnapshot) {
     activity={recording ? 'working' : busy ? 'thinking' : 'idle'} />;
   const recordButton = (small: boolean) => <button type="button" className="power" disabled={phase === 'finishing'} aria-label={label}
     title={label + ' · ' + preferences.shortcut} onClick={() => void desktop.toggle()}>
-    {canStop || (small && phase === 'finishing') ? <Stop size={small ? 16 : 19} weight="fill" />
+    {canStop || ((small || meeting) && phase === 'finishing') ? <Stop size={small ? 16 : 19} weight="fill" />
       : <Microphone size={small ? 19 : 22} weight="bold" />}
   </button>;
   const Caret = dock?.side === 'top' ? CaretDown : dock?.side === 'left' ? CaretRight : CaretLeft;
   const compactBar = dock && (compact || motion)
-    ? <section className="edge-dock" role="group" aria-label="EchoBuddy 贴边听写" data-side={dock.side} data-phase={phase} inert={!compact}>
+    ? <section className="edge-dock" role="group" aria-label={meeting ? 'EchoBuddy 贴边会议录音' : 'EchoBuddy 贴边听写'}
+      data-side={dock.side} data-phase={phase} inert={!compact}>
       <button type="button" className="dock-avatar" aria-label="展开 EchoBuddy" title="展开 EchoBuddy" onClick={() => void desktop.expandOverlay()}>
         {avatar}
       </button>
       {phase === 'idle' ? <button type="button" className="dock-arrow" aria-label="展开完整浮窗" title="展开完整浮窗"
         onClick={() => void desktop.expandOverlay()}><Caret size={15} weight="bold" aria-hidden="true" /></button>
         : recording && recordingStartedAt !== null ? <DockClock startedAt={recordingStartedAt} />
-        : <span className="dock-status" role="status">{phase === 'preparing' ? '准备中' : '转写中'}</span>}
+        : <span className="dock-status" role="status">{phase === 'preparing' ? '准备中' : meeting ? '保存中' : '转写中'}</span>}
       {recordButton(true)}
     </section> : null;
-  const expandedBar = compact && !motion ? null : <section className="shell" ref={shell} aria-label="EchoBuddy 听写浮窗" data-phase={phase} inert={compact}
+  const expandedBar = compact && !motion ? null : <section className="shell" ref={shell}
+    aria-label={meeting ? 'EchoBuddy 会议录音浮窗' : 'EchoBuddy 听写浮窗'} data-phase={phase} inert={compact}
     onPointerDown={event => {
       if (languagesOpen && event.target instanceof Element && !event.target.closest('.language-selector')) void desktop.closeLanguagePanel();
     }}>
     <div className="bar">
       <div className="tools">
         {avatar}
-        <div className="meter" role="img" aria-label={phaseText[phase]}>
-          {levels.map((value, i) => <i key={i} style={{
-            height: (recording ? 3 + Math.min(1, value ** 0.65) * 24 : 3) + 'px', opacity: 0.35 + i / 40,
-          }} />)}
+        <div className="recording-mode-swap recording-mode-status">
+          <div className="meter" role="img" aria-label={phaseText[dictation.phase]} inert={meeting}>
+            {levels.map((value, i) => <i key={i} style={{
+              height: (dictation.phase === 'recording' ? 3 + Math.min(1, value ** 0.65) * 24 : 3) + 'px', opacity: 0.35 + i / 40,
+            }} />)}
+          </div>
+          <div className="meeting-indicator" inert={!meeting}>
+            <span role="status">{meetingPhaseText[capture.phase]}</span>
+            {meeting && recording && recordingStartedAt !== null && <DockClock startedAt={recordingStartedAt} />}
+          </div>
         </div>
         <button type="button" className="tool" aria-label="设置" title="设置" aria-expanded={pane === 'settings'} aria-controls="settings-panel"
           onClick={() => togglePane('settings')}><GearSix size={21} /></button>
-        <button type="button" className="tool" aria-label="转写气泡" title="显示或收起转写" aria-expanded={pane === 'transcript'} aria-controls="transcript-panel"
-          onClick={() => togglePane('transcript')}><ChatCircleDots size={22} /></button>
+        <button type="button" className="tool"
+          aria-label={meeting ? '打开会议记录' : '转写气泡'} title={meeting ? '打开会议记录' : '显示或收起转写'}
+          aria-expanded={meeting ? undefined : pane === 'transcript'} aria-controls={meeting ? undefined : 'transcript-panel'}
+          onClick={() => {
+            if (meeting) void desktop.openMeeting();
+            else togglePane('transcript');
+          }}><ChatCircleDots size={22} aria-hidden="true" /></button>
       </div>
       {recordButton(false)}
     </div>
@@ -154,9 +178,15 @@ function App({ dictation, preferences, update, dock }: DesktopSnapshot) {
           <h3>录音模式</h3>
           <RecordingOptions mode={preferences.recordingMode} busy={busy} />
         </section>
-        <section className="settings-section settings-inline-row">
-          <h3>写入时机</h3>
-          <WriteOptions timing={preferences.writeTiming} busy={busy} />
+        <section className="settings-section recording-mode-swap recording-mode-details">
+          <div className="settings-inline-row" inert={meeting}>
+            <h3>写入时机</h3>
+            <WriteOptions timing={preferences.writeTiming} busy={busy} />
+          </div>
+          <div className="settings-inline-row" inert={!meeting}>
+            <h3>录音来源</h3>
+            <MeetingSourceOptions sources={meeting && busy ? capture.sources : preferences.meetingSources} busy={busy} />
+          </div>
         </section>
         <section className="settings-section settings-inline-row">
           <h3>识别语言</h3>
@@ -178,27 +208,32 @@ function App({ dictation, preferences, update, dock }: DesktopSnapshot) {
         </div>}
       </div>
     </PanelTransition>
-    {!busy && message && <PanelTransition open={pane !== 'settings' || meeting}>
+    {!busy && message && <PanelTransition open={pane !== 'settings' && !capture.message}>
       <div className="message" role="status">
         <span>{message}</span><button aria-label="收起听写提示" onClick={() => void desktop.clearMessage()}><X size={14} /></button>
       </div>
     </PanelTransition>}
-    {!busy && !pending && !message && update.phase === 'ready' && dismissed !== update.version &&
+    {capture.message && <div className="message meeting-notice">
+      <span role="status">{capture.message}</span>
+      {capture.latestId && <button type="button" className="meeting-link"
+        onClick={() => { if (capture.latestId) void desktop.openMeeting(capture.latestId); }}>查看会议</button>}
+      <button type="button" className="dismiss-meeting-notice" aria-label="收起会议录音提示"
+        onClick={() => void desktop.clearMeetingNotice()}><X size={14} /></button>
+    </div>}
+    {!busy && !pending && !message && !capture.message && update.phase === 'ready' && dismissed !== update.version &&
       <PanelTransition open={pane === null}>
         <UpdateNotice version={update.version} install={() => void desktop.installUpdate()} dismiss={() => setDismissed(update.version)} />
       </PanelTransition>}
   </section>;
 
-  const compactBounds = motion?.compact ?? dock?.compactBounds;
+  const layout = dock?.layout;
   const style = {
     ...theme,
-    ...(compactBounds && {
-      '--dock-compact-x': `${compactBounds.x}px`, '--dock-compact-y': `${compactBounds.y}px`,
-      '--dock-compact-width': `${compactBounds.width}px`, '--dock-compact-height': `${compactBounds.height}px`,
-    }),
-    ...(motion && {
-      '--dock-expanded-x': `${motion.expanded.x}px`, '--dock-expanded-y': `${motion.expanded.y}px`,
-      '--dock-expanded-width': `${motion.expanded.width}px`, '--dock-expanded-height': `${motion.expanded.height}px`,
+    ...(layout && {
+      '--dock-compact-x': `${layout.compact.x}px`, '--dock-compact-y': `${layout.compact.y}px`,
+      '--dock-compact-width': `${layout.compact.width}px`, '--dock-compact-height': `${layout.compact.height}px`,
+      '--dock-expanded-x': `${layout.expanded.x}px`, '--dock-expanded-y': `${layout.expanded.y}px`,
+      '--dock-expanded-width': `${layout.expanded.width}px`, '--dock-expanded-height': `${layout.expanded.height}px`,
     }),
   } as CSSProperties;
   return <div className={motion ? 'overlay dock-motion' : 'overlay'} data-compact={compact}
@@ -206,7 +241,7 @@ function App({ dictation, preferences, update, dock }: DesktopSnapshot) {
     onTransitionEnd={motion ? event => {
       if (event.target === event.currentTarget && event.propertyName === '--dock-progress' &&
         Number(getComputedStyle(event.currentTarget).getPropertyValue('--dock-progress')) === (compact ? 0 : 1)) {
-        desktop.finishDockMotion(motion.id);
+        desktop.finishDockMotion(motion);
       }
     } : undefined}>
     <div className={motion ? 'dock-motion-surface' : undefined}>
@@ -226,6 +261,7 @@ function Root() {
   useEffect(() => {
     const subscriptions = [
       desktop.onDictation(value => setSnapshot(old => ({ ...old, dictation: value }))),
+      desktop.onMeetingCapture(value => setSnapshot(old => ({ ...old, meeting: value }))),
       desktop.onPreferences(value => setSnapshot(old => ({ ...old, preferences: value }))),
       desktop.onUpdate(value => setSnapshot(old => ({ ...old, update: value }))),
       desktop.onOverlayDock(value => setSnapshot(old => ({ ...old, dock: value }))),

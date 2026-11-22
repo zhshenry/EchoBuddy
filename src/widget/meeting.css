@@ -1,0 +1,111 @@
+.meeting-indicator {
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  min-width: 0; height: 31px; white-space: nowrap; color: var(--muted);
+  font-size: var(--secondary-text-size); font-weight: var(--semibold);
+}
+.edge-dock:not([data-side="top"]) .dock-status[data-long="true"] svg { display: none; }
+.meeting-source-options label { gap: 2px; }
+.meeting-source-options label svg { flex: none; }
+.meeting-source-options label:has([aria-disabled="true"]) { cursor: default; }
+.message.meeting-notice { gap: 6px; }
+.meeting-notice > span { flex: 1; }
+.meeting-notice .meeting-link {
+  flex: none; width: auto; padding: 0 7px; background: var(--tint); color: var(--acc-deep);
+  font-size: var(--secondary-text-size); font-weight: var(--semibold);
+}
+.meeting-notice .meeting-link:hover { background: color-mix(in srgb, var(--tint) 88%, var(--accent)); }
+.meeting-notice .dismiss-meeting-notice { flex: none; width: 24px; }
+
+.meeting-layout {
+  --meeting-shell: #f3f4f6;
+  display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr);
+  min-width: 0; min-height: 0;
+}
+.meeting-layout:has(> .meeting-history) {
+  grid-template-columns: clamp(136px, 18vw, 176px) minmax(0, 1fr);
+}
+.meeting-history {
+  overflow: auto; min-height: 0; padding: 15px 9px; border-right: 1px solid var(--line);
+  background: var(--meeting-shell);
+}
+.meeting-day + .meeting-day { margin-top: 17px; }
+.meeting-day h2 {
+  margin: 0 9px 5px; color: var(--muted);
+  font-size: var(--secondary-text-size); font-weight: var(--semibold);
+}
+.meeting-history-item {
+  display: grid; gap: 4px; justify-items: start; width: 100%; min-height: 49px; margin-bottom: 3px;
+  padding: 8px 11px; border: 0; border-radius: 8px; text-align: start; background: transparent;
+}
+.meeting-history-item:is(:hover, [aria-current="true"]) { background: var(--tint); }
+.meeting-history-item strong { font-weight: var(--semibold); }
+.meeting-history-item span { color: var(--muted); font-size: var(--secondary-text-size); font-variant-numeric: tabular-nums; }
+.meeting-details {
+  overflow: auto; scrollbar-gutter: stable; min-width: 0; min-height: 0; padding: 23px 25px 24px;
+}
+.meeting-details h2 { margin: 0; font-size: 22px; line-height: var(--compact-line-height); }
+.meeting-detail-header { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: start; gap: 7px 12px; }
+.meeting-detail-header p, .meeting-subtle, .meeting-empty p { margin: 4px 0 0; color: var(--muted); }
+.meeting-folder, .meeting-retry {
+  display: inline-flex; gap: 6px; align-items: center; min-height: var(--control-height);
+  padding: 0 9px; border: 0; border-radius: 7px; background: var(--meeting-shell); color: var(--muted); white-space: nowrap;
+}
+.meeting-folder:hover, .meeting-retry:hover:enabled { color: var(--acc-deep); background: var(--tint); }
+.meeting-player {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 11px;
+  margin-top: 15px; padding: 8px 11px; border: 1px solid var(--line); border-radius: 10px; background: var(--meeting-shell);
+}
+.meeting-player audio { display: none; }
+.meeting-play {
+  display: grid; place-items: center; width: 38px; height: 38px; padding: 0;
+  border: 0; border-radius: 50%; color: white; background: var(--acc-deep);
+}
+.meeting-play:hover { background: color-mix(in srgb, var(--acc-deep) 84%, black); }
+.meeting-progress { appearance: none; width: 100%; height: 26px; margin: 0; background: transparent; border-radius: 6px; cursor: pointer; }
+.meeting-progress:focus-visible { outline: 2px solid var(--acc-deep); outline-offset: 2px; }
+.meeting-progress::-webkit-slider-runnable-track {
+  height: 4px; border-radius: 5px;
+  background: linear-gradient(to right, var(--accent) var(--played, 0%), #cfd3d9 var(--played, 0%));
+}
+.meeting-progress::-webkit-slider-thumb {
+  appearance: none; width: 14px; height: 14px; margin-top: -5px;
+  border: 2px solid var(--accent); border-radius: 50%; background: var(--surface);
+}
+.meeting-time, .meeting-transcript-line time {
+  color: var(--muted); font-size: var(--secondary-text-size); font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.meeting-warning { margin: 7px 0 0; color: var(--acc-deep); font-size: var(--secondary-text-size); }
+.meeting-transcript { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 12px; }
+.meeting-transcript-header { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 6px; }
+.meeting-transcript-header h3 { margin: 0 auto 0 0; font-size: 16px; }
+.meeting-transcript-header > span { color: var(--muted); font-size: var(--secondary-text-size); font-variant-numeric: tabular-nums; }
+.meeting-retry { color: var(--acc-deep); background: var(--tint); }
+.meeting-transcript ol { list-style: none; margin: 0; padding: 0; }
+.meeting-transcript li + li { border-top: 1px solid var(--line); }
+.meeting-transcript-line {
+  display: grid; grid-template-columns: 52px minmax(56px, auto) 62px minmax(0, 1fr); align-items: baseline; gap: 6px;
+  width: 100%; min-height: 43px; padding: 9px 7px;
+  border: 0; border-radius: 7px; background: transparent; text-align: start; line-height: var(--transcript-line-height);
+}
+.meeting-transcript-line:is(:hover, [aria-current="true"]) { background: var(--tint); }
+.meeting-transcript-line :is(strong, .meeting-line-source) { font-size: var(--secondary-text-size); white-space: nowrap; }
+.meeting-transcript-line [data-self="true"], .meeting-transcript-line[aria-current="true"] time { color: var(--acc-deep); font-weight: var(--semibold); }
+.meeting-line-source { color: var(--muted); }
+.meeting-line-text { overflow-wrap: anywhere; font-size: var(--body-size); }
+@media (max-width: 720px) {
+  .meeting-layout:has(> .meeting-history) {
+    grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr);
+  }
+  .meeting-history {
+    display: flex; align-items: center; gap: 12px; padding: 8px 10px;
+    border-right: 0; border-bottom: 1px solid var(--line);
+  }
+  .meeting-day { display: flex; align-items: center; gap: 6px; flex: none; }
+  .meeting-day + .meeting-day { margin-top: 0; }
+  .meeting-day h2, .meeting-history-item { margin: 0; }
+  .meeting-history-item { width: auto; white-space: nowrap; }
+  .meeting-details { padding: 15px; }
+  .meeting-transcript-header { flex-wrap: wrap; }
+  .meeting-transcript-line { grid-template-columns: auto auto 1fr; }
+  .meeting-line-text { grid-column: 1 / -1; }
+}

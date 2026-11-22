@@ -25,12 +25,7 @@ if (!sdk) throw new Error('Windows SDK 缺少 x64 UI Automation 库。');
 const nativeOut = join(root, 'dist-native');
 const compiler = join(vc, 'bin/Hostx64/x64');
 mkdirSync(nativeOut, { recursive: true });
-const native = spawnSync(join(compiler, 'cl.exe'), [
-  '/nologo', '/O2', '/EHsc', '/MT', '/W4', '/std:c++17', '/utf-8',
-  '/DUNICODE', '/D_UNICODE', `/Fo${join(nativeOut, 'echo-input.obj')}`,
-  `/Fe${join(nativeOut, 'echo-input.exe')}`, join(root, 'native/windows-input/main.cpp'),
-  '/link', 'User32.lib', 'Gdi32.lib', 'Ole32.lib', 'OleAut32.lib', 'UIAutomationCore.lib', 'Uuid.lib',
-], {
+const nativeOptions = {
   cwd: root, stdio: 'inherit', windowsHide: true,
   env: {
     ...process.env,
@@ -38,9 +33,18 @@ const native = spawnSync(join(compiler, 'cl.exe'), [
     INCLUDE: [join(vc, 'include'), ...['ucrt', 'shared', 'um', 'winrt'].map(dir => join(sdkRoot, 'Include', sdk, dir))].join(';'),
     LIB: [join(vc, 'lib/x64'), ...['ucrt', 'um'].map(dir => join(sdkRoot, 'Lib', sdk, dir, 'x64'))].join(';'),
   },
-});
-if (native.error) throw native.error;
-if (native.status !== 0) process.exit(native.status || 1);
+};
+function compile(name, source, libraries) {
+  const native = spawnSync(join(compiler, 'cl.exe'), [
+    '/nologo', '/O2', '/EHsc', '/MT', '/W4', '/std:c++17', '/utf-8',
+    '/DUNICODE', '/D_UNICODE', `/Fo${join(nativeOut, name + '.obj')}`,
+    `/Fe${join(nativeOut, name + '.exe')}`, join(root, source), '/link', ...libraries,
+  ], nativeOptions);
+  if (native.error) throw native.error;
+  if (native.status !== 0) process.exit(native.status || 1);
+}
+compile('echo-input', 'native/windows-input/main.cpp', ['User32.lib', 'Gdi32.lib', 'Ole32.lib', 'OleAut32.lib', 'UIAutomationCore.lib', 'Uuid.lib']);
+compile('echo-meeting', 'native/windows-meeting/main.cpp', ['Ole32.lib', 'Uuid.lib']);
 
 await build({
   absWorkingDir: root,

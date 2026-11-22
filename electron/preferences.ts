@@ -2,6 +2,7 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { isBotAvatar } from '../shared/bot-avatar';
 import { AVAILABLE_RECORDING_MODES, DOCK_SIDES, type DockPlacement, type Preferences } from '../shared/desktop';
+import { meetingSources } from '../shared/meeting-contracts';
 import { RECOGNITION_LANGUAGES } from '../shared/speech-contracts';
 
 export const defaultShortcut = 'Ctrl+Alt+M';
@@ -18,7 +19,7 @@ export function validShortcut(value: unknown): value is string {
 export function loadPreferences(path: string): SavedPreferences {
   const defaults: SavedPreferences = {
     avatar: 'drop:coral', shortcut: defaultShortcut, recordingMode: 'dictation', writeTiming: 'sentence', languages: [...RECOGNITION_LANGUAGES],
-    dockOnEdge: true,
+    dockOnEdge: true, meetingSources: ['microphone'],
   };
   try {
     const saved = JSON.parse(readFileSync(path, 'utf8'));
@@ -32,6 +33,7 @@ export function loadPreferences(path: string): SavedPreferences {
       shortcut: validShortcut(saved.shortcut) ? saved.shortcut : defaultShortcut,
       recordingMode: AVAILABLE_RECORDING_MODES.includes(saved.recordingMode) ? saved.recordingMode : defaults.recordingMode,
       writeTiming: saved.writeTiming === 'streaming' ? saved.writeTiming : defaults.writeTiming,
+      meetingSources: meetingSources(saved.meetingSources),
       dockOnEdge,
       languages: languages.length ? languages : defaults.languages,
       position: position && Number.isInteger(position.x) && Number.isInteger(position.y) ? position : undefined,

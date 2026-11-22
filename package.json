@@ -1,7 +1,7 @@
 {
   "name": "echobuddy",
   "productName": "EchoBuddy",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "private": true,
   "description": "Windows 离线桌面听写",
   "author": "zhshenry",
@@ -44,7 +44,8 @@
     "files": ["dist/**", "dist-electron/**", "assets/icon.ico", "assets/tray.png", "package.json"],
     "extraResources": [
       { "from": "vendor/speech", "to": "speech" },
-      { "from": "dist-native/echo-input.exe", "to": "echo-input.exe" }
+      { "from": "dist-native/echo-input.exe", "to": "echo-input.exe" },
+      { "from": "dist-native/echo-meeting.exe", "to": "echo-meeting.exe" }
     ],
     "asar": false,
     "npmRebuild": false,

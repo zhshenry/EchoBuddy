@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { dockAfterDrag, dockBounds } from '../electron/overlay-position';
+import { dockAfterDrag, dockBounds, dockWindowLayout } from '../electron/overlay-position';
 
 const screen = { id: 7, workArea: { x: -1440, y: 24, width: 1440, height: 876 } };
 
@@ -37,4 +37,18 @@ test('drop distance supports detaching and does not activate the bottom edge', (
   assert.equal(dockAfterDrag(nearLeft, screen, left)?.side, 'left');
   assert.equal(dockAfterDrag({ ...nearLeft, x: -1395 }, screen, left), undefined);
   assert.equal(dockAfterDrag({ ...nearLeft, x: -935, y: 812 }, screen), undefined);
+});
+
+test('both dock poses preserve their screen positions inside a single native frame', () => {
+  const { workArea } = screen;
+  for (const side of ['left', 'right', 'top'] as const) {
+    const placement = { side, displayId: screen.id, offset: .5 };
+    const { frame, compact, expanded } = dockWindowLayout(workArea, placement, 88);
+    for (const [bounds, isCompact] of [[compact, true], [expanded, false]] as const) {
+      assert.ok(bounds.x >= 0 && bounds.y >= 0);
+      assert.ok(bounds.x + bounds.width <= frame.width && bounds.y + bounds.height <= frame.height);
+      assert.deepEqual({ ...bounds, x: frame.x + bounds.x, y: frame.y + bounds.y },
+        dockBounds(workArea, placement, 88, isCompact));
+    }
+  }
 });

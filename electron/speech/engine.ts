@@ -1,17 +1,19 @@
 import { utilityProcess, type UtilityProcess } from 'electron';
 import { join } from 'node:path';
 import { validateSpeechWave } from '../../shared/speech-audio';
-import type { SpeechResult } from '../../shared/speech-contracts';
+import type { SpeechLanguage } from '../../shared/speech-contracts';
+import type { SpeakerLine } from '../../shared/speaker-contracts';
+import type { MeetingChunk, SpeechOperation, WorkerResult } from './worker-contract';
 
 type WorkerMessage = { type: 'ready' } | { type: 'error'; id?: string; message: string } |
-  { type: 'result'; id: string; result: SpeechResult };
+  { type: 'result'; id: string; result: WorkerResult };
 const idleMs = 5 * 60 * 1000;
 
 export class SpeechEngine {
   private child?: UtilityProcess;
   private loaded?: Promise<void>;
   private failLoad?: (error: Error) => void;
-  private pending?: { id: string; resolve: (value: string) => void; reject: (error: Error) => void; timer: NodeJS.Timeout };
+  private pending?: { id: string; resolve: (value: WorkerResult) => void; reject: (error: Error) => void; timer: NodeJS.Timeout };
   private queue: Promise<unknown> = Promise.resolve();
   private idle?: NodeJS.Timeout;
   private activeId?: string;
@@ -26,17 +28,41 @@ export class SpeechEngine {
     void Promise.resolve().then(() => this.load()).catch(() => {});
   }
 
-  transcribe(sessionId: string, audio: Uint8Array): Promise<string> {
+  async transcribe(sessionId: string, audio: Uint8Array): Promise<string> {
+    const result = await this.request(sessionId, audio, { type: 'transcribe', language: 'auto' });
+    if (result.type !== 'transcribe') throw new Error('本地转写失败，请重试。');
+    return result.result.text;
+  }
+
+  async embedding(sessionId: string, audio: Uint8Array, meeting = false): Promise<number[] | null> {
+    const result = await this.request(sessionId, audio, { type: 'embedding', meeting });
+    if (result.type !== 'embedding') throw new Error('提取声纹失败，请重试。');
+    return result.embedding;
+  }
+
+  async meetingChunk(sessionId: string, audio: Uint8Array, language: SpeechLanguage): Promise<MeetingChunk> {
+    const result = await this.request(sessionId, audio, { type: 'meeting', language });
+    if (result.type !== 'meeting') throw new Error('本地转写失败，请重试。');
+    return result.chunk;
+  }
+
+  async speakers(sessionId: string, audio: Uint8Array, voiceprint: number[] | null): Promise<SpeakerLine[]> {
+    const result = await this.request(sessionId, audio, { type: 'speakers', voiceprint });
+    if (result.type !== 'speakers') throw new Error('说话人标注失败，请重试。');
+    return result.lines;
+  }
+
+  private request(sessionId: string, audio: Uint8Array, operation: SpeechOperation): Promise<WorkerResult> {
     validateSpeechWave(audio);
     const next = this.queue.then(async () => {
       if (sessionId !== this.activeId) throw new Error('本次听写已结束。');
       await this.load();
       if (sessionId !== this.activeId || !this.child) throw new Error('本次听写已结束。');
-      return new Promise<string>((resolve, reject) => {
+      return new Promise<WorkerResult>((resolve, reject) => {
         const id = String(++this.requestId);
         const timer = setTimeout(() => this.close('离线转写超时，请重试。'), 120000);
         this.pending = { id, resolve, reject, timer };
-        this.child!.postMessage({ id, audio, language: 'auto' });
+        this.child!.postMessage({ ...operation, id, audio });
       });
     });
     this.queue = next.catch(() => {});
@@ -88,7 +114,7 @@ export class SpeechEngine {
         if (!pending || message.id !== pending.id) return;
         this.pending = undefined;
         clearTimeout(pending.timer);
-        if (message.type === 'result') pending.resolve(message.result.text);
+        if (message.type === 'result') pending.resolve(message.result);
         else pending.reject(new Error(message.message));
       });
       child.once('exit', () => {

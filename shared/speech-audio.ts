@@ -16,14 +16,20 @@ export function validateSpeechWave(bytes: Uint8Array): number {
   return seconds;
 }
 
-export function encodeSpeechWave(samples: Float32Array): Uint8Array {
-  const count = Math.min(samples.length, SPEECH_MAX_SECONDS * SPEECH_SAMPLE_RATE);
-  const bytes = new Uint8Array(44 + count * 2), view = new DataView(bytes.buffer);
+export function pcmWaveHeader(count: number): Uint8Array {
+  const bytes = new Uint8Array(44), view = new DataView(bytes.buffer);
   const tag = (at: number, value: string): void => { [...value].forEach((letter, i) => view.setUint8(at + i, letter.charCodeAt(0))); };
-  tag(0, 'RIFF'); view.setUint32(4, bytes.length - 8, true); tag(8, 'WAVE'); tag(12, 'fmt ');
+  tag(0, 'RIFF'); view.setUint32(4, 36 + count * 2, true); tag(8, 'WAVE'); tag(12, 'fmt ');
   view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true);
   view.setUint32(24, SPEECH_SAMPLE_RATE, true); view.setUint32(28, SPEECH_SAMPLE_RATE * 2, true);
   view.setUint16(32, 2, true); view.setUint16(34, 16, true); tag(36, 'data'); view.setUint32(40, count * 2, true);
+  return bytes;
+}
+
+export function encodeSpeechWave(samples: Float32Array): Uint8Array {
+  const count = Math.min(samples.length, SPEECH_MAX_SECONDS * SPEECH_SAMPLE_RATE);
+  const bytes = new Uint8Array(44 + count * 2), view = new DataView(bytes.buffer);
+  bytes.set(pcmWaveHeader(count));
   for (let i = 0; i < count; i++) { const sample = Math.max(-1, Math.min(1, samples[i] || 0)); view.setInt16(44 + i * 2, Math.round(sample * (sample < 0 ? 32768 : 32767)), true); }
   return bytes;
 }
