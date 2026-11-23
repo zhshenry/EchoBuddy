@@ -4,10 +4,10 @@ import test from 'node:test';
 import type { AppUpdater } from 'electron-updater';
 import { Dictation } from '../electron/dictation';
 import { AppUpdates } from '../electron/updater';
-import type { WriteResult } from '../electron/windows-input';
+import type { CaptureResult, WriteResult } from '../electron/windows-input';
 import { Capture, stableDraftPrefix } from '../src/audio/capture';
 
-function setup(capture: (shortcut?: string) => Promise<boolean> = async () => true) {
+function setup(capture: (shortcut?: string) => Promise<CaptureResult> = async () => 'captured') {
   const writes: [string, boolean][] = [], clipboard: string[] = [], calls: string[] = [];
   let answer: WriteResult | Promise<WriteResult> = 'written';
   const controller = new Dictation(
@@ -19,7 +19,7 @@ function setup(capture: (shortcut?: string) => Promise<boolean> = async () => tr
 }
 
 test('starting audio does not wait for either the original caret or the speech worker', async () => {
-  let targetReady!: (found: boolean) => void;
+  let targetReady!: (result: CaptureResult) => void;
   let capturedShortcut: string | undefined;
   const { controller, writes, calls } = setup(shortcut => new Promise(resolve => {
     capturedShortcut = shortcut;
@@ -38,7 +38,7 @@ test('starting audio does not wait for either the original caret or the speech w
   await controller.complete(id, '重复完成通知');
   assert.deepEqual(writes, []);
   assert.equal(controller.blocksInstall(), true);
-  targetReady(true);
+  targetReady('captured');
   await finishing;
   assert.deepEqual(writes, [['开头已经录到。', true]]);
   assert.deepEqual(calls, [id, id]);
@@ -149,6 +149,22 @@ test('streaming stops writing after the caret moves and retains the unwritten su
   assert.equal(controller.snapshot().pending, '第二段。第三段。');
 });
 
+test('an editor with a tracked focus and no readable caret receives one paste at stop', async () => {
+  for (const timing of ['sentence', 'streaming'] as const) {
+    const { controller, writes, next } = setup(async () => 'paste-on-stop');
+    controller.toggle(undefined, timing);
+    const id = controller.snapshot().sessionId!;
+    controller.recording(id);
+    await controller.writeProgress(id, '第一段。');
+    assert.deepEqual(writes, []);
+    next('paste-unconfirmed');
+    await controller.complete(id, '第一段。第二段。');
+    assert.deepEqual(writes, [['第一段。第二段。', true]]);
+    assert.equal(controller.snapshot().pending, '第一段。第二段。');
+    assert.match(controller.snapshot().message, /转写仍在剪贴板/);
+  }
+});
+
 test('an inconsistent streaming final is retained in full for review', async () => {
   const { controller, writes } = setup();
   controller.toggle(undefined, 'streaming');
@@ -191,7 +207,7 @@ test('moved target leaves a recoverable transcript and blocks update installatio
 });
 
 test('the recovery button sends one write and retains unconfirmed text', async () => {
-  const { controller, writes, next } = setup(async () => false);
+  const { controller, writes, next } = setup(async () => 'unavailable');
   controller.toggle();
   await controller.complete(controller.snapshot().sessionId!, '保留转写。');
   assert.deepEqual(writes, []);
@@ -210,8 +226,19 @@ test('the recovery button sends one write and retains unconfirmed text', async (
   assert.match(controller.snapshot().message, /核对输入框，转写已保留/);
 });
 
+test('an unconfirmed clipboard paste tells the user where the transcript is', async () => {
+  const { controller, writes, next } = setup(async () => 'unavailable');
+  controller.toggle();
+  await controller.complete(controller.snapshot().sessionId!, '本次转写。');
+  next('paste-unconfirmed');
+  await controller.insertPending();
+  assert.deepEqual(writes, [['本次转写。', false]]);
+  assert.equal(controller.snapshot().pending, '本次转写。');
+  assert.match(controller.snapshot().message, /转写仍在剪贴板/);
+});
+
 test('clearing a stopped transcript drops its pending text and signals the preview to reset', async () => {
-  const { controller, writes, clipboard } = setup(async () => false);
+  const { controller, writes, clipboard } = setup(async () => 'unavailable');
   controller.toggle();
   const capturing = controller.snapshot();
   controller.clearTranscript();

@@ -1,10 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { SHORT_DICTATION_MAX_SECONDS, type DictationState, type WriteTiming } from '../shared/desktop';
 import type { SpeechEngine } from './speech/engine';
-import type { WindowsInput, WriteResult } from './windows-input';
+import type { CaptureResult, WindowsInput, WriteResult } from './windows-input';
 
 type Streaming = { written: string; writes: Promise<void>; failure?: Exclude<WriteResult, 'written'> };
-type Session = { id: string; target: Promise<boolean>; completing: boolean; stopTimer?: NodeJS.Timeout; stream?: Streaming };
+type Session = { id: string; target: Promise<CaptureResult>; completing: boolean; stopTimer?: NodeJS.Timeout; stream?: Streaming };
 
 export class Dictation {
   private state: DictationState = { phase: 'idle', sessionId: null, recordingStartedAt: null, pending: '', message: '', reveal: 0, clearRevision: 0 };
@@ -31,7 +31,7 @@ export class Dictation {
     const id = randomUUID();
     const streaming = timing === 'streaming';
     this.session = {
-      id, target: this.input.capture(shortcut, streaming).catch(() => false), completing: false,
+      id, target: this.input.capture(shortcut, streaming).catch(() => 'unavailable' as const), completing: false,
       stream: streaming ? { written: '', writes: Promise.resolve() } : undefined,
     };
     this.engine.begin(id);
@@ -62,9 +62,9 @@ export class Dictation {
       const remainder = text.slice(stream.written.length);
       if (!remainder) return;
       const target = await session.target;
-      if (this.state.phase !== 'recording') return;
+      if (this.state.phase !== 'recording' || target === 'paste-on-stop') return;
       try {
-        const result = target ? await this.input.insert(remainder, true) : 'moved';
+        const result = target === 'captured' ? await this.input.insert(remainder, true) : 'moved';
         if (result === 'written') stream.written = text;
         else stream.failure = result;
       } catch { stream.failure = 'unavailable'; }
@@ -95,7 +95,8 @@ export class Dictation {
         pending = text;
         message = '定稿有改动，请核对已写入的文字。';
       } else if (remainder) {
-        const result = stream?.failure ?? (await session.target ? await this.input.insert(remainder, true) : 'moved');
+        const result = stream?.failure ?? ((await session.target) === 'unavailable'
+          ? 'moved' : await this.input.insert(remainder, true));
         if (result !== 'written') {
           pending = result === 'partial' ? text : remainder;
           message = this.writeMessage(result, true);
@@ -145,6 +146,7 @@ export class Dictation {
   }
 
   private writeMessage(result: WriteResult, original: boolean): string {
+    if (result === 'paste-unconfirmed') return '已发送粘贴。转写仍在剪贴板，请核对输入框。';
     if (result === 'partial') return original ? '可能已写入部分内容。请检查输入框，全文已保留。'
       : '可能已经写入。请先核对输入框，转写已保留。';
     return original ? '原光标已移动或无法确认，转写已保留。' : '请将光标放在可编辑的输入框后重试，或复制这段文字。';

@@ -13,7 +13,7 @@ struct DictationShortcut {
 
 inline constexpr ULONG_PTR dictationInputTag = 0x45425544;
 
-// Track intervening input for opaque chat fields and streaming writes.
+// Track intervening input for guarded pastes and streaming writes.
 class ChatTargetWatch {
 public:
     ~ChatTargetWatch() { stop(); }
@@ -37,12 +37,18 @@ public:
             const HHOOK mouse = SetWindowsHookExW(WH_MOUSE_LL, mouseEvent, module, 0);
             const HWINEVENTHOOK focus = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND,
                 nullptr, foregroundEvent, 0, 0, WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
+            DWORD process = 0;
+            GetWindowThreadProcessId(foreground_, &process);
+            const HWINEVENTHOOK editorFocus = process ? SetWinEventHook(EVENT_OBJECT_FOCUS, EVENT_OBJECT_FOCUS,
+                nullptr, editorFocusEvent, process, 0, WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS) : nullptr;
+            editorChanged_ = !editorFocus;
             const bool installed = keyboard && mouse && focus && GetForegroundWindow() == foreground_;
             ready.set_value(installed ? GetCurrentThreadId() : 0);
             if (installed) {
                 while (GetMessageW(&message, nullptr, 0, 0) > 0) DispatchMessageW(&message);
             }
             changed_ = true;
+            if (editorFocus) UnhookWinEvent(editorFocus);
             if (focus) UnhookWinEvent(focus);
             if (mouse) UnhookWindowsHookEx(mouse);
             if (keyboard) UnhookWindowsHookEx(keyboard);
@@ -60,6 +66,7 @@ public:
 
     bool watching() const { return threadId_ != 0; }
     bool unchanged() const { return !changed_; }
+    bool editorUnchanged() const { return watching() && unchanged() && !editorChanged_; }
 
 private:
     void keyEvent(DWORD key, bool down) {
@@ -102,6 +109,10 @@ private:
         if (window != active_->foreground_) active_->changed_ = true;
     }
 
+    static void CALLBACK editorFocusEvent(HWINEVENTHOOK, DWORD, HWND, LONG, LONG, DWORD, DWORD) {
+        active_->editorChanged_ = true;
+    }
+
     inline static thread_local ChatTargetWatch* active_ = nullptr;
     struct Modifier { DWORD key; UINT mask; bool down; };
     Modifier modifiers_[8] = {
@@ -111,6 +122,7 @@ private:
         {VK_LWIN, MOD_WIN, false}, {VK_RWIN, MOD_WIN, false},
     };
     std::atomic_bool changed_{true};
+    std::atomic_bool editorChanged_{true};
     std::thread worker_;
     DWORD threadId_ = 0;
     HWND foreground_ = nullptr;
