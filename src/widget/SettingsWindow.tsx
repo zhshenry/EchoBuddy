@@ -6,6 +6,7 @@ import { BotAvatar } from '../avatars/BotAvatar';
 import { AvatarPicker } from './AvatarPicker';
 import { MeetingRecords } from './MeetingRecords';
 import { LanguageSelector, WriteOptions } from './SpeechOptions';
+import { refreshSettingsDragRegion } from './settings-drag-region';
 import { SpeakerSettings } from './SpeakerSettings';
 import { UpdateSettings } from './UpdateSettings';
 
@@ -33,6 +34,7 @@ export function SettingsWindow({ dictation, meeting, preferences, update }: Desk
   const [languagesOpen, setLanguagesOpen] = useState(false);
   const [binding, setBinding] = useState(false);
   const [bindingError, setBindingError] = useState('');
+  const header = useRef<HTMLElement>(null);
   const title = useRef<HTMLHeadingElement>(null);
   const { color } = botAvatarChoice(preferences.avatar);
   const palette = botAvatarColors.find(item => item.id === color)!;
@@ -59,6 +61,9 @@ export function SettingsWindow({ dictation, meeting, preferences, update }: Desk
     void desktop.settingsDestination().then(target => { if (active && !navigated) apply(target); }).catch(() => {});
     return () => { active = false; cancel(); languages(); navigate(); };
   }, [desktop]);
+  useEffect(() => desktop.onSettingsDragRefresh(() => {
+    if (header.current) refreshSettingsDragRegion(header.current, run => { requestAnimationFrame(run); });
+  }), [desktop]);
   useEffect(() => {
     function keydown(event: KeyboardEvent) {
       if (event.repeat || event.isComposing) return;
@@ -92,7 +97,7 @@ export function SettingsWindow({ dictation, meeting, preferences, update }: Desk
   return <main className="settings-window" aria-labelledby="settings-title" onPointerDown={event => {
     if (languagesOpen && event.target instanceof Element && !event.target.closest('.language-selector')) void desktop.closeLanguagePanel();
   }}>
-    <header className="settings-header">
+    <header className="settings-header" ref={header}>
       <BotAvatar avatar="drop:coral" />
       <h1 id="settings-title" tabIndex={-1} ref={title}>EchoBuddy 设置</h1>
       <button type="button" className="window-button" aria-label="最小化设置" onClick={() => void desktop.minimizeSettings()}><Minus size={18} /></button>

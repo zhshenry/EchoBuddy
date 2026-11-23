@@ -55,6 +55,7 @@ const bridge: DesktopBridge = {
   onPreferences: callback => listen('preferences:state', callback),
   onLanguagePanel: callback => listen('languages:panel-state', callback),
   onSettingsPage: callback => listen('settings:page', callback),
+  onSettingsDragRefresh: callback => listen('settings:refresh-drag', callback),
   onUpdate: callback => listen('update:state', callback),
   onOverlayDock: callback => listen('overlay:dock', callback),
   onOverlayPointer: callback => {
