@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import { ArrowsClockwise, Keyboard, Microphone, Minus, Palette, PencilSimple, Waveform, X } from '@phosphor-icons/react';
 import { botAvatarChoice, botAvatarColors } from '../../shared/bot-avatar';
-import { resolveSettingsPage, type DesktopSnapshot, type SettingsDestination } from '../../shared/desktop';
+import { AVAILABLE_RECORDING_MODES, RECORDING_MODE_NAMES, resolveSettingsPage, type DesktopSnapshot, type RecordingMode, type SettingsDestination } from '../../shared/desktop';
 import { BotAvatar } from '../avatars/BotAvatar';
 import { AvatarPicker } from './AvatarPicker';
 import { MeetingRecords } from './MeetingRecords';
@@ -32,8 +32,8 @@ export function SettingsWindow({ dictation, meeting, preferences, update }: Desk
     return { page: resolveSettingsPage(initialPage), meetingId: id };
   });
   const [languagesOpen, setLanguagesOpen] = useState(false);
-  const [binding, setBinding] = useState(false);
-  const [bindingError, setBindingError] = useState('');
+  const [binding, setBinding] = useState<RecordingMode | null>(null);
+  const [bindingError, setBindingError] = useState<{ mode: RecordingMode; message: string } | null>(null);
   const header = useRef<HTMLElement>(null);
   const title = useRef<HTMLHeadingElement>(null);
   const { color } = botAvatarChoice(preferences.avatar);
@@ -50,12 +50,12 @@ export function SettingsWindow({ dictation, meeting, preferences, update }: Desk
     const apply = (target: SettingsDestination) => {
       setDestination(previous => ({ page: target.page, meetingId: target.meetingId ?? previous.meetingId }));
     };
-    const cancel = desktop.onShortcutCancelled(() => setBinding(false));
+    const cancel = desktop.onShortcutCancelled(() => setBinding(null));
     const languages = desktop.onLanguagePanel(setLanguagesOpen);
     const navigate = desktop.onSettingsPage(target => {
       navigated = true;
       apply(target);
-      setBinding(false);
+      setBinding(null);
       void desktop.finishShortcut();
     });
     void desktop.settingsDestination().then(target => { if (active && !navigated) apply(target); }).catch(() => {});
@@ -68,30 +68,32 @@ export function SettingsWindow({ dictation, meeting, preferences, update }: Desk
     function keydown(event: KeyboardEvent) {
       if (event.repeat || event.isComposing) return;
       if (event.key === 'Escape') {
+        if (document.querySelector('dialog:modal')) return;
         event.preventDefault();
         if (languagesOpen) void desktop.closeLanguagePanel();
         else if (binding) {
-          setBinding(false);
+          setBinding(null);
           void desktop.finishShortcut();
         } else void desktop.closeSettings();
         return;
       }
-      const shortcut = binding && combination(event);
+      if (!binding) return;
+      const shortcut = combination(event);
       if (!shortcut) return;
       event.preventDefault();
-      setBinding(false);
-      void desktop.finishShortcut(shortcut).then(error => setBindingError(error ?? ''));
+      setBinding(null);
+      void desktop.finishShortcut(shortcut).then(message => setBindingError(message ? { mode: binding, message } : null));
     }
     window.addEventListener('keydown', keydown);
     return () => window.removeEventListener('keydown', keydown);
   }, [binding, desktop, languagesOpen]);
 
-  async function editShortcut() {
-    setBindingError('');
+  async function editShortcut(mode: RecordingMode) {
+    setBindingError(null);
     if (binding) {
-      setBinding(false);
+      setBinding(null);
       void desktop.finishShortcut();
-    } else if (await desktop.beginShortcut()) setBinding(true);
+    } else if (await desktop.beginShortcut(mode)) setBinding(mode);
   }
 
   return <main className="settings-window" aria-labelledby="settings-title" onPointerDown={event => {
@@ -146,17 +148,23 @@ export function SettingsWindow({ dictation, meeting, preferences, update }: Desk
             </div>
           </section>
         </>}
-        {page === 'shortcuts' && <section className="settings-section">
-          <div className="row">
-            <h2>听写快捷键</h2>
-            <button type="button" className="key-button" aria-label="修改快捷键" aria-pressed={binding} disabled={busy} onClick={() => void editShortcut()}>
-              {binding ? '按下新组合键' : <span className="keys">{preferences.shortcut.split('+').map(key => <kbd key={key}>{key}</kbd>)}</span>}
-              <PencilSimple size={14} />
-            </button>
-          </div>
-          {(bindingError || (!binding && !preferences.shortcutActive)) &&
-            <p className="shortcut-error" role="status">{bindingError || '快捷键已被占用，请换一组。'}</p>}
-        </section>}
+        {page === 'shortcuts' && AVAILABLE_RECORDING_MODES.map(mode => {
+          const label = RECORDING_MODE_NAMES[mode] + '快捷键';
+          const isBinding = binding === mode;
+          const error = bindingError?.mode === mode ? bindingError.message
+            : !binding && !preferences.shortcutActive[mode] ? '快捷键已被占用，请换一组。' : '';
+          return <section className="settings-section" key={mode}>
+            <div className="row settings-inline-row">
+              <h2>{label}</h2>
+              <button type="button" className="key-button" aria-label={'修改' + label} aria-pressed={isBinding}
+                disabled={busy || (binding !== null && !isBinding)} onClick={() => void editShortcut(mode)}>
+                {isBinding ? '按下新组合键' : <span className="keys">{preferences.shortcuts[mode].split('+').map(key => <kbd key={key}>{key}</kbd>)}</span>}
+                <PencilSimple size={14} aria-hidden="true" />
+              </button>
+            </div>
+            {error && <p className="shortcut-error" role="status">{error}</p>}
+          </section>;
+        })}
         {page === 'updates' && <section className="settings-section settings-updates">
           <h2>版本更新</h2>
           <UpdateSettings update={update} blocked={updateBlocked} showReleaseLink />

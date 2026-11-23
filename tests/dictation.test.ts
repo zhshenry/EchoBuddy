@@ -190,6 +190,45 @@ test('moved target leaves a recoverable transcript and blocks update installatio
   assert.equal(controller.blocksInstall(), false);
 });
 
+test('the recovery button sends one write and retains unconfirmed text', async () => {
+  const { controller, writes, next } = setup(async () => false);
+  controller.toggle();
+  await controller.complete(controller.snapshot().sessionId!, '保留转写。');
+  assert.deepEqual(writes, []);
+
+  let finish!: (result: WriteResult) => void;
+  next(new Promise(resolve => { finish = resolve; }));
+  const pending = controller.insertPending();
+  await controller.insertPending();
+  assert.deepEqual(writes, [['保留转写。', false]]);
+  const writing = controller.snapshot();
+  controller.clearTranscript();
+  assert.equal(controller.snapshot(), writing);
+  finish('partial');
+  await pending;
+  assert.equal(controller.snapshot().pending, '保留转写。');
+  assert.match(controller.snapshot().message, /核对输入框，转写已保留/);
+});
+
+test('clearing a stopped transcript drops its pending text and signals the preview to reset', async () => {
+  const { controller, writes, clipboard } = setup(async () => false);
+  controller.toggle();
+  const capturing = controller.snapshot();
+  controller.clearTranscript();
+  assert.equal(controller.snapshot(), capturing);
+  await controller.complete(capturing.sessionId!, '本次转写。');
+  const finished = controller.snapshot();
+  assert.equal(finished.pending, '本次转写。');
+
+  controller.clearTranscript();
+  assert.deepEqual(controller.snapshot(), { ...finished, pending: '', message: '', clearRevision: finished.clearRevision + 1 });
+  await controller.insertPending();
+  controller.copyPending();
+  assert.deepEqual(writes, []);
+  assert.deepEqual(clipboard, []);
+  assert.equal(controller.blocksInstall(), false);
+});
+
 test('starting another recording discards the previous pending transcript', async () => {
   const { controller, writes, next } = setup();
   controller.toggle();

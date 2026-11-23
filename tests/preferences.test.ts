@@ -18,12 +18,34 @@ function testSettings(t: TestContext) {
 
 test('legacy settings keep the shortcut, avatar, and overlay position', t => {
   const file = testSettings(t);
-  const legacy = { avatar: 'drop:coral', shortcut: 'F8', position: { x: 200, y: 100 } };
-  writeFileSync(file, JSON.stringify(legacy), 'utf8');
+  const legacy = { avatar: 'drop:coral', position: { x: 200, y: 100 } };
+  writeFileSync(file, JSON.stringify({ ...legacy, shortcut: 'F8' }), 'utf8');
   assert.deepEqual(loadPreferences(file), {
-    ...legacy, recordingMode: 'dictation', writeTiming: 'sentence', dockOnEdge: true, languages: [...RECOGNITION_LANGUAGES],
+    ...legacy, shortcuts: { dictation: 'F8', meeting: 'Ctrl+Alt+Shift+R' },
+    recordingMode: 'dictation', writeTiming: 'sentence', dockOnEdge: true, languages: [...RECOGNITION_LANGUAGES],
     meetingSources: ['microphone'],
   });
+});
+
+test('the two mode shortcuts persist independently and fall back independently', t => {
+  const file = testSettings(t);
+  const shortcuts = { dictation: 'Ctrl+D', meeting: 'Alt+Shift+F8' };
+  savePreferences(file, { ...loadPreferences(file), shortcuts });
+  assert.deepEqual(loadPreferences(file).shortcuts, shortcuts);
+
+  writeFileSync(file, JSON.stringify({ shortcuts: { ...shortcuts, meeting: 'F13' } }), 'utf8');
+  assert.deepEqual(loadPreferences(file).shortcuts, { dictation: 'Ctrl+D', meeting: 'Ctrl+Alt+Shift+R' });
+});
+
+test('a legacy shortcut matching the meeting default stays assigned to dictation', t => {
+  const file = testSettings(t);
+  for (const settings of [
+    { shortcut: 'Alt+Shift+Ctrl+R' },
+    { shortcuts: { dictation: 'Alt+Shift+Ctrl+R', meeting: 'Ctrl+Alt+Shift+R' } },
+  ]) {
+    writeFileSync(file, JSON.stringify(settings), 'utf8');
+    assert.deepEqual(loadPreferences(file).shortcuts, { dictation: 'Ctrl+Alt+Shift+R', meeting: 'Ctrl+Alt+Shift+M' });
+  }
 });
 
 test('dock preference restores a valid saved position and clears a disabled or invalid dock', t => {

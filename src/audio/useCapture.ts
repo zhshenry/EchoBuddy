@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { DictationState, WriteTiming } from '../../shared/desktop';
 import { Capture } from './capture';
 
@@ -6,11 +6,13 @@ function joined(lines: string[]) {
   return lines.reduce((text, line) => text + (/[a-z\d.,!?]$/i.test(text) && /^[a-z\d]/i.test(line) ? ' ' : '') + line, '');
 }
 
-export function useCapture({ phase, sessionId }: DictationState, timing: WriteTiming) {
+export function useCapture({ phase, sessionId, clearRevision }: DictationState, timing: WriteTiming) {
   const running = useRef<{ id: string; capture: Capture; stopping: boolean } | undefined>(undefined);
   const [levels, setLevels] = useState<number[]>(Array(25).fill(0));
   const [lines, setLines] = useState<string[]>([]);
   const [draft, setDraft] = useState('');
+
+  useLayoutEffect(() => { setLines([]); setDraft(''); }, [clearRevision]);
 
   useEffect(() => {
     const desktop = window.echoBuddy;

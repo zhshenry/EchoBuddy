@@ -5,7 +5,7 @@ import { SPEECH_SAMPLE_RATE as rate } from '../../shared/speech-contracts';
 import type { SpeechEngine } from '../speech/engine';
 import { cosine, minimumMeetingVoiceSamples } from '../speech/speaker-timeline';
 import type { MeetingCandidate, MeetingChunk } from '../speech/worker-contract';
-import { frameMs, type MeetingStore } from './store';
+import { frameMs, type MeetingStore, type MeetingUpdate } from './store';
 import { meetingCut, MeetingSpeakers, mergeMeetingLines } from './timeline';
 
 const chunkFrames = 30 * rate;
@@ -16,9 +16,10 @@ type Inference = Pick<SpeechEngine, 'begin' | 'end' | 'close' | 'embedding' | 'm
 type SourceChunk = MeetingChunk & { source: MeetingSource };
 
 export class MeetingTranscription {
-  private processing = false;
+  private processing?: { id: string; done: Promise<void> };
   private shuttingDown = false;
   private readonly retrying = new Set<string>();
+  private readonly deleting = new Set<string>();
 
   constructor(
     private readonly store: MeetingStore,
@@ -29,16 +30,16 @@ export class MeetingTranscription {
 
   start(): void {
     if (this.processing || this.shuttingDown) return;
-    const record = this.store.list().find(item => item.status === 'queued');
+    const record = this.store.list().find(item => item.status === 'queued' && !this.deleting.has(item.id));
     if (!record) return;
-    this.processing = true;
-    void this.process(record).catch(error => {
+    const done = this.process(record).catch(error => {
       console.error('EchoBuddy could not save transcription progress', error);
     }).then(() => {
-      this.processing = false;
+      this.processing = undefined;
       // A write failure may have left this record queued. Wait for a new request or app restart.
       if (this.store.get(record.id)?.status !== 'queued') this.start();
     });
+    this.processing = { id: record.id, done };
   }
 
   close(): void {
@@ -56,55 +57,76 @@ export class MeetingTranscription {
 
   async retry(id: string): Promise<void> {
     const record = this.store.get(id);
-    if (!record?.durationMs || record.status !== 'failed' || this.retrying.has(id)) return;
+    if (!record?.durationMs || record.status !== 'failed' || this.retrying.has(id) || this.deleting.has(id)) return;
     this.retrying.add(id);
     try {
-      await this.save({ ...record, status: 'queued', error: '' });
+      await this.save(id, { status: 'queued', error: '' });
       this.start();
     } finally { this.retrying.delete(id); }
   }
 
-  private async save(record: MeetingRecord): Promise<MeetingRecord> {
-    const result = await this.store.save(record);
+  async trash(id: string, moveToTrash: (path: string) => Promise<void>): Promise<void> {
+    if (this.deleting.has(id)) throw new Error('正在删除这场会议。');
+    this.deleting.add(id);
+    try {
+      const processing = this.processing;
+      if (processing?.id === id) {
+        this.engine.end(id);
+        this.engine.close();
+        await processing.done;
+        // A failed move can resume from the last committed batch.
+        if (this.store.get(id)?.status === 'transcribing') await this.save(id, { status: 'queued' });
+      }
+      await this.store.trash(id, moveToTrash);
+    } finally {
+      this.deleting.delete(id);
+      this.start();
+    }
+  }
+
+  private async save(id: string, changes: MeetingUpdate): Promise<void> {
+    await this.store.update(id, changes);
     this.publish();
-    return result;
   }
 
   private async process(record: MeetingRecord): Promise<void> {
     const { id, language } = record;
+    const interrupted = () => this.shuttingDown || this.deleting.has(id);
     this.engine.begin(id);
     try {
       const batches = await this.store.batches(id);
       const total = await this.store.frameCount(record);
+      if (interrupted()) return;
       let start = batches.at(-1)?.endFrame ?? 0;
-      record = await this.save({ ...record, status: 'transcribing', processedMs: frameMs(start), error: '' });
+      await this.save(id, { status: 'transcribing', processedMs: frameMs(start), error: '' });
       const profile = this.voiceprint(), speakers = new MeetingSpeakers(profile);
       if (start) await this.restoreSpeakers(record, speakers, batches.flatMap(batch => batch.lines));
       let recent = batches.slice(-2).flatMap(batch => batch.lines);
-      while (start < total && !this.shuttingDown) {
+      while (start < total && !interrupted()) {
         const readFrom = Math.max(0, start - contextFrames);
         const readUntil = Math.min(total, start + chunkFrames + contextFrames);
         const sources: SourceChunk[] = [];
         for (const source of record.sources) {
           const audio = await this.store.readWave(id, source, readFrom, readUntil - readFrom);
+          if (interrupted()) return;
           sources.push({ source, ...await this.engine.meetingChunk(id, audio, language) });
+          if (interrupted()) return;
         }
-        if (this.shuttingDown) return;
         const offsetMs = frameMs(readFrom);
         const end = readUntil === total ? total : readFrom + toFrame(meetingCut(
           sources.flatMap(source => source.lines), frameMs(start + chunkFrames - readFrom),
         ));
         const lines = this.labelChunk(id, sources, speakers, profile, recent, offsetMs, frameMs(start), frameMs(end), end === total);
         await this.store.append(id, { startFrame: start, endFrame: end, lines });
-        record = await this.save({ ...record, processedMs: Math.min(record.durationMs, frameMs(end)) });
+        await this.save(id, { processedMs: Math.min(record.durationMs, frameMs(end)) });
         start = end;
         recent = [...recent, ...lines].filter(line => line.endMs >= frameMs(end - 4 * contextFrames));
       }
-      if (!this.shuttingDown) await this.save({ ...record, status: 'ready', processedMs: record.durationMs });
+      if (!interrupted()) await this.save(id, { status: 'ready', processedMs: record.durationMs });
     } catch (error) {
-      if (!this.shuttingDown) {
+      if (!interrupted()) {
         console.error('EchoBuddy meeting transcription failed', error);
-        await this.save({ ...record, status: 'failed', error: error instanceof Error && /[\u3400-\u9fff]/.test(error.message)
+        await this.save(id, { status: 'failed', error: error instanceof Error && /[\u3400-\u9fff]/.test(error.message)
           ? error.message : '会议转写失败，请重试。' });
       }
     } finally {
@@ -154,7 +176,7 @@ export class MeetingTranscription {
     }
     const total = await this.store.frameCount(record);
     for (const [speaker, clips] of samples) {
-      if (this.shuttingDown) return;
+      if (this.shuttingDown || this.deleting.has(record.id)) return;
       const longest = clips.sort((a, b) => (b.endMs - b.startMs) - (a.endMs - a.startMs)).slice(0, 4);
       const pcm: Uint8Array[] = [];
       let frames = 0;

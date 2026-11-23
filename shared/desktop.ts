@@ -11,10 +11,13 @@ export interface DictationState {
   pending: string;
   message: string;
   reveal: number;
+  clearRevision: number;
 }
 
 export type RecordingMode = 'dictation' | 'meeting';
 export const AVAILABLE_RECORDING_MODES: readonly RecordingMode[] = ['dictation', 'meeting'];
+export const RECORDING_MODE_NAMES: Readonly<Record<RecordingMode, string>> = { dictation: '短听写', meeting: '会议录音' };
+export const DEFAULT_SHORTCUTS: Readonly<Record<RecordingMode, string>> = { dictation: 'Ctrl+Alt+M', meeting: 'Ctrl+Alt+Shift+R' };
 export type WriteTiming = 'streaming' | 'sentence';
 export const DOCK_SIDES = ['left', 'right', 'top'] as const;
 export type DockSide = typeof DOCK_SIDES[number];
@@ -39,8 +42,8 @@ export function resolveSettingsPage(value: unknown): SettingsPage {
 
 export interface Preferences {
   avatar: string;
-  shortcut: string;
-  shortcutActive: boolean;
+  shortcuts: Record<RecordingMode, string>;
+  shortcutActive: Record<RecordingMode, boolean>;
   recordingMode: RecordingMode;
   writeTiming: WriteTiming;
   meetingSources: MeetingSource[];
@@ -77,14 +80,18 @@ export interface DesktopBridge {
   complete(id: string, text: string, error?: string): Promise<void>;
   insertPending(): Promise<void>;
   copyPending(): Promise<void>;
+  clearTranscript(): Promise<void>;
   clearMessage(): Promise<void>;
   clearMeetingNotice(): Promise<void>;
   openMeeting(id?: string): Promise<void>;
   meetingLibrary(): Promise<MeetingLibrary>;
   meetingDetail(id: string): Promise<MeetingDetail | null>;
+  renameMeeting(id: string, title: string): Promise<void>;
+  deleteMeeting(id: string): Promise<void>;
   retryMeeting(id: string): Promise<void>;
   openMeetingFolder(id: string): Promise<string>;
-  resize(height: number): void;
+  /** Returns the toolbar's resting inset and the available height below its anchor in window pixels. */
+  resize(height: number): Promise<{ room: number; inset: number } | undefined>;
   expandOverlay(): Promise<void>;
   dragCompact(point: OverlayPointer): void;
   finishDockMotion(id: number): void;
@@ -106,7 +113,7 @@ export interface DesktopBridge {
   setDockOnEdge(value: boolean): Promise<void>;
   toggleLanguage(language: RecognitionLanguage): Promise<void>;
   setAvatar(avatar: string): Promise<boolean>;
-  beginShortcut(): Promise<boolean>;
+  beginShortcut(mode: RecordingMode): Promise<boolean>;
   finishShortcut(shortcut?: string): Promise<string | null>;
   checkUpdate(): Promise<void>;
   installUpdate(): Promise<boolean>;

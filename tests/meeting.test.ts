@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { appendFile, mkdtemp, open, readFile, rm, writeFile } from 'node:fs/promises';
+import { appendFile, mkdtemp, open, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import test, { type TestContext } from 'node:test';
 import { meetingAudio } from '../electron/meeting/audio-response';
@@ -31,6 +31,87 @@ test('reopening a recording with stale headers repairs both tracks on the common
   assert.equal(validateSpeechWave(system), 2);
   assert.equal(system[32043], 4);
   assert.equal(system[32044], 0);
+});
+
+test('renaming a meeting and saving transcription progress preserve both changes on reopen', async t => {
+  const { root, store } = await library(t);
+  const base = await store.begin(['microphone'], 'auto');
+  const record = await store.save({ ...base, status: 'transcribing', durationMs: 4000 });
+  await Promise.all([
+    store.update(record.id, { title: '项目例会' }),
+    store.update(record.id, { status: 'ready', processedMs: 4000 }),
+  ]);
+
+  const reopened = new MeetingStore(root);
+  await reopened.load();
+  assert.deepEqual(reopened.list(), [{ ...record, title: '项目例会', status: 'ready', processedMs: 4000 }]);
+});
+
+test('a meeting leaves the library only after its directory is moved to the recycle bin', async t => {
+  const { root, store } = await library(t);
+  const record = await store.save({ ...await store.begin(['microphone', 'system'], 'auto'), status: 'ready', durationMs: 1000 });
+  const other = await store.save({ ...await store.begin(['microphone'], 'auto'), status: 'ready', durationMs: 1000 });
+  for (const source of record.sources) await writeFile(store.track(record.id, source), encodeSpeechWave(new Float32Array(16000)));
+  await store.append(record.id, { startFrame: 0, endFrame: 16000, lines: [] });
+
+  await assert.rejects(store.trash(record.id, async () => { throw new Error('Recycle Bin unavailable'); }), /unavailable/);
+  assert.equal(store.get(record.id), record);
+  const recycled = join(root, 'recycled');
+  await Promise.all([
+    store.update(record.id, { title: '验收会议' }),
+    store.trash(record.id, async path => {
+      assert.equal(path, store.directory(record.id));
+      await rename(path, recycled);
+    }),
+  ]);
+
+  assert.equal(store.audioPath(record.id, 'microphone'), null);
+  assert.equal(JSON.parse(await readFile(join(recycled, 'meeting.json'), 'utf8')).title, '验收会议');
+  for (const source of record.sources) assert.equal(validateSpeechWave(await readFile(join(recycled, source + '.wav'))), 1);
+  assert.match(await readFile(join(recycled, 'transcript.jsonl'), 'utf8'), /"endFrame":16000/);
+  const reopened = new MeetingStore(root);
+  await reopened.load();
+  assert.deepEqual(reopened.list(), [other]);
+});
+
+test('deleting a meeting being transcribed stops its worker and continues the remaining queue', { timeout: 5000 }, async t => {
+  const { root, store } = await library(t);
+  const current = await store.begin(['microphone'], 'auto');
+  const next = await store.begin(['microphone'], 'auto');
+  for (const record of [current, next]) {
+    await writeFile(store.track(record.id, 'microphone'), encodeSpeechWave(new Float32Array(16000)));
+    await store.finish(record, '');
+  }
+  await store.save({ ...store.get(next.id)!, createdAt: current.createdAt - 1000 });
+
+  let requestStarted!: () => void, complete!: () => void, cancelChunk!: (error: Error) => void;
+  const started = new Promise<void>(resolve => { requestStarted = resolve; });
+  const ready = new Promise<void>(resolve => { complete = resolve; });
+  let stopped = false;
+  const engine = {
+    begin() {}, end() {}, async embedding() { return null; },
+    close() { stopped = true; cancelChunk(new Error('Worker stopped')); },
+    async meetingChunk(id: string): Promise<MeetingChunk> {
+      if (id !== current.id) return { lines: [], voices: [] };
+      return new Promise((_resolve, reject) => {
+        cancelChunk = reject;
+        requestStarted();
+      });
+    },
+  };
+  const transcription = new MeetingTranscription(store, engine, () => null, () => {
+    if (store.get(next.id)?.status === 'ready') complete();
+  });
+  transcription.start();
+  await started;
+  assert.equal(store.get(current.id)?.status, 'transcribing');
+  await transcription.trash(current.id, async path => {
+    assert.equal(stopped, true);
+    await rename(path, join(root, 'recycled'));
+  });
+  await ready;
+  assert.equal(store.get(current.id), undefined);
+  assert.equal(store.get(next.id)?.status, 'ready');
 });
 
 test('a two-hour recording remains streamable with bounded HTTP byte ranges', async t => {

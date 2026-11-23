@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState, type CSSProperties } from 'react';
-import { FolderOpen, Pause, Play } from '@phosphor-icons/react';
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
+import { FolderOpen, Pause, Play, Trash } from '@phosphor-icons/react';
 import { MEETING_SOURCE_NAMES, type MeetingLibrary, type MeetingLine, type MeetingRecord, type MeetingSpeaker } from '../../shared/meeting-contracts';
 
 const desktop = window.echoBuddy;
@@ -34,6 +34,8 @@ function recordStatus(record: MeetingRecord): string {
 
 export function MeetingRecords({ selected, onSelect }: { selected?: string; onSelect: (id: string) => void }) {
   const [library, setLibrary] = useState<MeetingLibrary | null>(null);
+  const layout = useRef<HTMLElement>(null);
+  const previousId = useRef<string | undefined>(undefined);
   useEffect(() => {
     let mounted = true, notified = false;
     const sync = desktop.onMeetingLibrary(value => { notified = true; setLibrary(value); });
@@ -45,6 +47,15 @@ export function MeetingRecords({ selected, onSelect }: { selected?: string; onSe
 
   const records = library?.records ?? [];
   const record = records.find(item => item.id === selected) ?? records[0];
+  const activeId = record?.id;
+  useLayoutEffect(() => {
+    const oldId = previousId.current;
+    previousId.current = activeId;
+    if (oldId && !records.some(item => item.id === oldId)) {
+      layout.current?.querySelector<HTMLElement>('.meeting-history-item[aria-current="true"], .meeting-empty')?.focus();
+    }
+  }, [activeId, records]);
+
   const groups = new Map<string, MeetingRecord[]>();
   for (const item of records) {
     const day = dayOf(item.createdAt);
@@ -52,7 +63,7 @@ export function MeetingRecords({ selected, onSelect }: { selected?: string; onSe
     group.push(item);
     groups.set(day, group);
   }
-  return <section className="meeting-layout" aria-label="会议记录">
+  return <section className="meeting-layout" ref={layout} aria-label="会议记录">
     {!!groups.size && <nav className="meeting-history" aria-label="会议列表">
       {[...groups].map(([day, items]) => <section className="meeting-day" key={day}>
         <h2>{day}</h2>
@@ -64,7 +75,7 @@ export function MeetingRecords({ selected, onSelect }: { selected?: string; onSe
       </section>)}
     </nav>}
     {record ? <MeetingReview key={record.id} record={record} />
-      : <div className="meeting-details meeting-empty" role="status">
+      : <div className="meeting-details meeting-empty" role="status" tabIndex={-1}>
         <strong>{library?.error || (library ? '暂无会议记录' : '正在读取会议记录…')}</strong>
         {library && !library.error && <p>在浮窗的「录音模式」选择「会议录音」，停录后可在这里回看。</p>}
       </div>}
@@ -72,18 +83,31 @@ export function MeetingRecords({ selected, onSelect }: { selected?: string; onSe
 }
 
 function MeetingReview({ record }: { record: MeetingRecord }) {
+  const [titleMode, setTitleMode] = useState<'view' | 'edit' | 'saving' | 'error'>('view');
   const [lines, setLines] = useState<MeetingLine[]>([]);
   const [detailError, setDetailError] = useState('');
   const [folderError, setFolderError] = useState('');
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState(false);
   const [retrying, setRetrying] = useState(false);
   const [time, setTime] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [playError, setPlayError] = useState('');
+  const deleteDialog = useRef<HTMLDialogElement>(null);
+  const titleButton = useRef<HTMLButtonElement>(null);
+  const restoreTitleFocus = useRef(false);
   const player = useRef<HTMLAudioElement>(null);
   const secondTrack = useRef<HTMLAudioElement>(null);
   const playbackRequest = useRef(0);
   const duration = record.durationMs / 1000;
   const { id, processedMs, status } = record;
+
+  useLayoutEffect(() => {
+    if (titleMode === 'view' && restoreTitleFocus.current) {
+      restoreTitleFocus.current = false;
+      titleButton.current?.focus();
+    }
+  }, [titleMode]);
 
   useEffect(() => {
     let current = true;
@@ -100,6 +124,27 @@ function MeetingReview({ record }: { record: MeetingRecord }) {
     const first = player.current, second = secondTrack.current;
     return () => { playbackRequest.current++; first?.pause(); second?.pause(); };
   }, []);
+
+  function closeTitleEditor(refocus: boolean) {
+    restoreTitleFocus.current = refocus;
+    setTitleMode('view');
+  }
+
+  async function saveTitle(input: HTMLInputElement, refocus = false) {
+    if (titleMode === 'saving') return;
+    const title = input.value.trim();
+    if (!title || title === record.title) {
+      closeTitleEditor(refocus);
+      return;
+    }
+    setTitleMode('saving');
+    try {
+      await desktop.renameMeeting(id, title);
+      closeTitleEditor(refocus && document.activeElement === input);
+    } catch {
+      setTitleMode('error');
+    }
+  }
 
   function seek(seconds: number) {
     const next = Math.min(duration, Math.max(0, seconds));
@@ -145,6 +190,18 @@ function MeetingReview({ record }: { record: MeetingRecord }) {
     catch { setFolderError('无法打开录音文件夹。'); }
   }
 
+  async function deleteRecording() {
+    if (deleting) return;
+    setDeleting(true);
+    setDeleteError(false);
+    pause();
+    try {
+      await desktop.deleteMeeting(id);
+      deleteDialog.current?.close();
+    } catch { setDeleteError(true); }
+    finally { setDeleting(false); }
+  }
+
   async function retry() {
     setRetrying(true);
     try { await desktop.retryMeeting(id); }
@@ -155,14 +212,54 @@ function MeetingReview({ record }: { record: MeetingRecord }) {
   const progress = status === 'transcribing' && processedMs > 0 ? ' · ' + Math.min(99, Math.floor(processedMs / record.durationMs * 100)) + '%' : '';
   return <section className="meeting-details" aria-labelledby="meeting-title">
     <div className="meeting-detail-header">
-      <div>
-        <h2 id="meeting-title">{record.title}</h2>
-        <p>{record.sources.map(source => MEETING_SOURCE_NAMES[source]).join(' · ')}</p>
+      <div className="meeting-heading">
+        <h2 id="meeting-title" aria-label={record.title}>
+          {titleMode === 'view' ? <button type="button" className="meeting-title-control" ref={titleButton}
+            aria-label={record.title + '，编辑会议名称'} title="编辑会议名称" onClick={() => setTitleMode('edit')}>
+            {record.title}
+          </button> : <input type="text" className="meeting-title-control" aria-label="会议名称"
+            aria-describedby={titleMode === 'error' ? 'meeting-title-error' : undefined}
+            defaultValue={record.title} readOnly={titleMode === 'saving'} autoFocus
+            onFocus={event => event.currentTarget.select()}
+            onBlur={event => void saveTitle(event.currentTarget)}
+            onKeyDown={event => {
+              if (event.nativeEvent.isComposing) return;
+              if (event.key === 'Enter') {
+                event.preventDefault();
+                void saveTitle(event.currentTarget, true);
+              } else if (event.key === 'Escape') {
+                event.preventDefault();
+                event.stopPropagation();
+                if (titleMode !== 'saving') closeTitleEditor(true);
+              }
+            }} />}
+        </h2>
+        <p>{titleMode === 'error' ? <span className="meeting-title-error" id="meeting-title-error" role="alert">名称未保存，请重试。</span>
+          : record.sources.map(source => MEETING_SOURCE_NAMES[source]).join(' · ')}</p>
       </div>
-      <button type="button" className="meeting-folder" onClick={() => void openFolder()}>
-        <FolderOpen size={17} aria-hidden="true" />打开录音文件夹
-      </button>
+      <div className="meeting-header-actions">
+        <button type="button" className="meeting-folder" onClick={() => void openFolder()}>
+          <FolderOpen size={17} aria-hidden="true" />打开录音文件夹
+        </button>
+        <button type="button" className="meeting-delete" onClick={() => {
+          setDeleteError(false);
+          deleteDialog.current?.showModal();
+        }}><Trash size={17} aria-hidden="true" />删除录音</button>
+      </div>
     </div>
+    <dialog ref={deleteDialog} className="meeting-delete-dialog" role="alertdialog"
+      aria-labelledby="meeting-delete-title" aria-describedby="meeting-delete-description"
+      onCancel={event => { if (deleting) event.preventDefault(); }}>
+      <h3 id="meeting-delete-title">删除录音？</h3>
+      <p id="meeting-delete-description">「{record.title}」的录音和转写会一起移到 Windows 回收站。</p>
+      {deleteError && <p className="meeting-warning" role="alert">无法将录音移到回收站，请重试。</p>}
+      <div className="meeting-delete-actions">
+        <button type="button" disabled={deleting} onClick={() => deleteDialog.current?.close()}>取消</button>
+        <button type="button" className="meeting-delete-confirm" disabled={deleting} onClick={() => void deleteRecording()}>
+          {deleting ? '正在删除…' : '移到回收站'}
+        </button>
+      </div>
+    </dialog>
     {folderError && <p className="meeting-warning" role="status">{folderError}</p>}
     <div className="meeting-player" role="group" aria-label="录音回放">
       {record.sources.map((source, index) => <audio key={source} preload="metadata" ref={index === 0 ? player : secondTrack}

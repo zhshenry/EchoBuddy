@@ -16,7 +16,7 @@ import { MeetingStore, meetingId } from './meeting/store';
 import { MeetingTranscription } from './meeting/transcription';
 import { createOverlay } from './overlay';
 import { fitOverlay } from './overlay-position';
-import { loadPreferences, savePreferences, validShortcut } from './preferences';
+import { loadPreferences, normalizeShortcut, savePreferences } from './preferences';
 import { watchSettingsDragRefresh } from './settings-drag-refresh';
 import { SpeechEngine } from './speech/engine';
 import { SpeakerSession } from './speech/speaker-session';
@@ -43,9 +43,9 @@ async function start() {
   const preferencesPath = join(app.getPath('userData'), 'settings.json');
   const saved = loadPreferences(preferencesPath);
   const meetingStore = new MeetingStore(join(process.env.LOCALAPPDATA || join(app.getPath('home'), 'AppData', 'Local'), 'EchoBuddy', 'Meetings'));
-  function persist() {
-    try { savePreferences(preferencesPath, saved); }
-    catch (error) { console.error('EchoBuddy preferences could not be saved', error); }
+  function persist(): boolean {
+    try { savePreferences(preferencesPath, saved); return true; }
+    catch (error) { console.error('EchoBuddy preferences could not be saved', error); return false; }
   }
 
   protocol.handle('echobuddy', request => {
@@ -252,15 +252,15 @@ async function start() {
     overlay.setAttention(!!(value.pending || value.message || meeting.snapshot().message));
     say('dictation:state', value);
   }, text => clipboard.writeText(text));
-  let editing = false;
+  let editing: RecordingMode | null = null;
   const updateEnabled = app.isPackaged && existsSync(join(process.resourcesPath, 'app-update.yml'));
   const updates = new AppUpdates(app.getVersion(), updateEnabled ? autoUpdater : null, value => say('update:state', value),
-    () => editing || speaker.active || meeting.active || dictation.blocksInstall());
+    () => editing !== null || speaker.active || meeting.active || dictation.blocksInstall());
 
-  let shortcutActive = false;
+  const shortcutActive: Preferences['shortcutActive'] = { dictation: false, meeting: false };
   let quitting = false;
   const prefs = (): Preferences => ({
-    avatar: saved.avatar, shortcut: saved.shortcut, shortcutActive,
+    avatar: saved.avatar, shortcuts: saved.shortcuts, shortcutActive,
     recordingMode: saved.recordingMode, writeTiming: saved.writeTiming, meetingSources: saved.meetingSources,
     languages: saved.languages, dockOnEdge: saved.dockOnEdge,
   });
@@ -270,37 +270,55 @@ async function start() {
     say('preferences:state', value);
     languageWindow?.webContents.send('preferences:state', value);
   }
-  const register = (value: string) => {
-    try { return globalShortcut.register(value.replace('Win+', 'Super+'), toggle); }
+  function registerShortcut(mode: RecordingMode, value = saved.shortcuts[mode]): boolean {
+    try { return globalShortcut.register(value.replace('Win+', 'Super+'), () => toggle(mode)); }
     catch { return false; }
-  };
-  function toggle() {
+  }
+  function registerShortcuts() {
+    for (const mode of AVAILABLE_RECORDING_MODES) {
+      if (!shortcutActive[mode]) shortcutActive[mode] = registerShortcut(mode);
+    }
+  }
+  function toggle(requested?: RecordingMode) {
     if (quitting || editing || speaker.active || updates.isInstalling()) return;
+    const active = meeting.active ? 'meeting' : dictation.snapshot().phase !== 'idle' ? 'dictation' : null;
+    if (requested && active && requested !== active) return;
+    const mode = active ?? requested ?? saved.recordingMode;
     closeLanguagePanel();
     if (!window.isVisible()) window.showInactive();
-    const state = dictation.snapshot();
-    if (meeting.active || (saved.recordingMode === 'meeting' && state.phase === 'idle')) {
+    if (mode === 'meeting') {
       if (meeting.active) meeting.stop();
       else meeting.start(saved.meetingSources, saved.languages.length === 1 ? saved.languages[0] : 'auto');
       return;
     }
-    dictation.toggle(shortcutActive ? saved.shortcut : undefined, saved.writeTiming);
+    dictation.toggle(shortcutActive.dictation ? saved.shortcuts.dictation : undefined, saved.writeTiming);
   }
   function finishShortcut(value?: string): string | null {
-    if (!editing) return null;
-    editing = false;
+    const mode = editing;
+    if (!mode) return null;
+    editing = null;
     let error = null;
-    if (value && !validShortcut(value)) error = '请选择一个组合键或 F1～F12。';
-    else if (value) {
-      shortcutActive = register(value);
-      if (shortcutActive) { saved.shortcut = value; persist(); }
-      else error = '这个快捷键已被占用，原设置已保留。';
+    if (value !== undefined) {
+      const shortcut = normalizeShortcut(value);
+      if (!shortcut) error = '请选择一个组合键或 F1～F12。';
+      else if (AVAILABLE_RECORDING_MODES.some(other => other !== mode && saved.shortcuts[other] === shortcut)) {
+        error = '短听写和会议录音需要不同的快捷键。';
+      } else if (registerShortcut(mode, shortcut)) {
+        const previous = saved.shortcuts[mode];
+        saved.shortcuts[mode] = shortcut;
+        if (persist()) shortcutActive[mode] = true;
+        else {
+          saved.shortcuts[mode] = previous;
+          globalShortcut.unregister(shortcut.replace('Win+', 'Super+'));
+          error = '无法保存快捷键，原设置已保留。';
+        }
+      } else error = '这个快捷键已被占用，原设置已保留。';
     }
-    if (!shortcutActive) shortcutActive = register(saved.shortcut);
+    registerShortcuts();
     say('preferences:state', prefs());
     return error;
   }
-  shortcutActive = register(saved.shortcut);
+  registerShortcuts();
 
   type WindowScope = 'overlay' | 'settings' | 'both' | 'all';
   function authorizedWindow(event: IpcMainInvokeEvent, from: WindowScope): BrowserWindow {
@@ -324,7 +342,7 @@ async function start() {
   handle('desktop:snapshot', () => ({
     dictation: dictation.snapshot(), meeting: meeting.snapshot(), update: updates.snapshot(), preferences: prefs(), dock: overlay.snapshot(),
   }), 'all');
-  handle('dictation:toggle', toggle);
+  handle('dictation:toggle', () => toggle());
   handle('dictation:recording', (id: string) => dictation.recording(id));
   handle('dictation:transcribe', (id: string, audio: Uint8Array) => dictation.transcribe(id, audio));
   handle('dictation:write-progress', (id: string, text: string) => {
@@ -335,6 +353,7 @@ async function start() {
   });
   handle('dictation:insert-pending', () => dictation.insertPending());
   handle('dictation:copy', () => dictation.copyPending());
+  handle('dictation:clear-transcript', () => dictation.clearTranscript());
   handle('dictation:clear-message', () => dictation.showMessage(''));
   handle('meeting:clear-notice', () => meeting.clearNotice());
   handle('meeting:open', (id?: string) => {
@@ -347,6 +366,19 @@ async function start() {
     return library();
   }, 'settings');
   handle('meeting:detail', (id: string) => transcription.detail(id), 'settings');
+  handle('meeting:rename', async (id: string, title: string) => {
+    if (typeof id !== 'string' || !meetingStore.get(id)?.durationMs) throw new Error('找不到这场会议。');
+    const name = typeof title === 'string' ? title.trim() : '';
+    if (!name) throw new Error('会议名称不能为空。');
+    await meetingStore.update(id, { title: name });
+    publishLibrary();
+  }, 'settings');
+  handle('meeting:delete', async (id: string) => {
+    if (typeof id !== 'string' || !meetingId.test(id)) throw new Error('会议记录无效。');
+    await transcription.trash(id, path => shell.trashItem(path));
+    if (meeting.snapshot().latestId === id) meeting.clearNotice();
+    publishLibrary();
+  }, 'settings');
   handle('meeting:retry', (id: string) => transcription.retry(id), 'settings');
   handle('meeting:folder', async (id: string) => {
     if (typeof id !== 'string' || !meetingStore.get(id)?.durationMs) return '找不到这场会议的录音。';
@@ -408,11 +440,12 @@ async function start() {
     updatePreferences();
     return true;
   }, 'settings');
-  handle('preferences:begin-shortcut', () => {
-    if (editing || speaker.active || meeting.active || updates.isInstalling() || dictation.snapshot().phase !== 'idle') return false;
+  handle('preferences:begin-shortcut', (mode: RecordingMode) => {
+    if (!AVAILABLE_RECORDING_MODES.includes(mode) || editing || speaker.active || meeting.active || updates.isInstalling() ||
+        dictation.snapshot().phase !== 'idle') return false;
     globalShortcut.unregisterAll();
-    shortcutActive = false;
-    editing = true;
+    for (const item of AVAILABLE_RECORDING_MODES) shortcutActive[item] = false;
+    editing = mode;
     return true;
   }, 'settings');
   handle('preferences:finish-shortcut', finishShortcut, 'settings');

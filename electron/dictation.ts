@@ -7,7 +7,7 @@ type Streaming = { written: string; writes: Promise<void>; failure?: Exclude<Wri
 type Session = { id: string; target: Promise<boolean>; completing: boolean; stopTimer?: NodeJS.Timeout; stream?: Streaming };
 
 export class Dictation {
-  private state: DictationState = { phase: 'idle', sessionId: null, recordingStartedAt: null, pending: '', message: '', reveal: 0 };
+  private state: DictationState = { phase: 'idle', sessionId: null, recordingStartedAt: null, pending: '', message: '', reveal: 0, clearRevision: 0 };
   private session?: Session;
   private writing = false;
 
@@ -132,6 +132,11 @@ export class Dictation {
     } catch { this.set({ message: '复制未完成，请重试。' }); }
   }
 
+  clearTranscript(): void {
+    if (this.session || this.writing) return;
+    this.set({ pending: '', message: '', clearRevision: this.state.clearRevision + 1 });
+  }
+
   showMessage(message: string): void { this.set({ message }); }
 
   private set(changes: Partial<DictationState>): void {
@@ -140,7 +145,8 @@ export class Dictation {
   }
 
   private writeMessage(result: WriteResult, original: boolean): string {
-    if (result === 'partial') return '可能已写入部分内容。请检查输入框，全文已保留。';
+    if (result === 'partial') return original ? '可能已写入部分内容。请检查输入框，全文已保留。'
+      : '可能已经写入。请先核对输入框，转写已保留。';
     return original ? '原光标已移动或无法确认，转写已保留。' : '请将光标放在可编辑的输入框后重试，或复制这段文字。';
   }
 }

@@ -1,24 +1,25 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { isBotAvatar } from '../shared/bot-avatar';
-import { AVAILABLE_RECORDING_MODES, DOCK_SIDES, type DockPlacement, type Preferences } from '../shared/desktop';
+import { AVAILABLE_RECORDING_MODES, DEFAULT_SHORTCUTS, DOCK_SIDES, type DockPlacement, type Preferences } from '../shared/desktop';
 import { meetingSources } from '../shared/meeting-contracts';
 import { RECOGNITION_LANGUAGES } from '../shared/speech-contracts';
 
-export const defaultShortcut = 'Ctrl+Alt+M';
 export type SavedPreferences = Omit<Preferences, 'shortcutActive'> & { position?: { x: number; y: number }; dock?: DockPlacement };
+const shortcutModifiers = ['Ctrl', 'Alt', 'Shift', 'Win'];
 
-export function validShortcut(value: unknown): value is string {
-  if (typeof value !== 'string') return false;
+export function normalizeShortcut(value: unknown): string | undefined {
+  if (typeof value !== 'string') return;
   const parts = value.split('+'), key = parts.pop() ?? '';
-  if (!/^(?:[A-Z0-9]|F(?:[1-9]|1[0-2])|Space)$/.test(key)) return false;
-  if (!parts.length) return /^F\d+$/.test(key);
-  return new Set(parts).size === parts.length && parts.every(part => ['Ctrl', 'Alt', 'Shift', 'Win'].includes(part));
+  if (!/^(?:[A-Z0-9]|F(?:[1-9]|1[0-2])|Space)$/.test(key)) return;
+  if (!parts.length) return /^F\d+$/.test(key) ? key : undefined;
+  if (new Set(parts).size !== parts.length || parts.some(part => !shortcutModifiers.includes(part))) return;
+  return [...shortcutModifiers.filter(modifier => parts.includes(modifier)), key].join('+');
 }
 
 export function loadPreferences(path: string): SavedPreferences {
   const defaults: SavedPreferences = {
-    avatar: 'drop:coral', shortcut: defaultShortcut, recordingMode: 'dictation', writeTiming: 'sentence', languages: [...RECOGNITION_LANGUAGES],
+    avatar: 'drop:coral', shortcuts: { ...DEFAULT_SHORTCUTS }, recordingMode: 'dictation', writeTiming: 'sentence', languages: [...RECOGNITION_LANGUAGES],
     dockOnEdge: true, meetingSources: ['microphone'],
   };
   try {
@@ -28,9 +29,15 @@ export function loadPreferences(path: string): SavedPreferences {
     const dockOnEdge = typeof saved.dockOnEdge === 'boolean' ? saved.dockOnEdge : defaults.dockOnEdge;
     const languages = Array.isArray(saved.languages)
       ? RECOGNITION_LANGUAGES.filter(language => saved.languages.includes(language)) : [];
+    const dictationShortcut = normalizeShortcut(saved.shortcuts?.dictation) ?? normalizeShortcut(saved.shortcut) ?? DEFAULT_SHORTCUTS.dictation;
+    const meetingShortcut = normalizeShortcut(saved.shortcuts?.meeting);
+    const defaultMeeting = dictationShortcut === DEFAULT_SHORTCUTS.meeting ? 'Ctrl+Alt+Shift+M' : DEFAULT_SHORTCUTS.meeting;
     return {
       avatar: isBotAvatar(saved.avatar) ? saved.avatar : defaults.avatar,
-      shortcut: validShortcut(saved.shortcut) ? saved.shortcut : defaultShortcut,
+      shortcuts: {
+        dictation: dictationShortcut,
+        meeting: meetingShortcut && meetingShortcut !== dictationShortcut ? meetingShortcut : defaultMeeting,
+      },
       recordingMode: AVAILABLE_RECORDING_MODES.includes(saved.recordingMode) ? saved.recordingMode : defaults.recordingMode,
       writeTiming: saved.writeTiming === 'streaming' ? saved.writeTiming : defaults.writeTiming,
       meetingSources: meetingSources(saved.meetingSources),

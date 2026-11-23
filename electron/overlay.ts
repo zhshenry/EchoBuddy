@@ -27,21 +27,24 @@ export function createOverlay(
   const window = new BrowserWindow({
     x: anchor.x, y: anchor.y, width, height, minWidth: width, minHeight,
     show: false, frame: false, transparent: true, resizable: false, fullscreenable: false, maximizable: false,
-    alwaysOnTop: true, focusable: false, skipTaskbar: true, hasShadow: false, title: 'EchoBuddy', icon,
+    focusable: false, skipTaskbar: true, hasShadow: false, title: 'EchoBuddy', icon,
     webPreferences: {
       preload, sandbox: true, contextIsolation: true, nodeIntegration: false, spellcheck: false,
       backgroundThrottling: false,
     },
   });
-  window.setAlwaysOnTop(true, 'floating');
+  // The work area keeps the overlay clear of the taskbar. Placing the window
+  // directly behind the taskbar can demote it when the taskbar isn't topmost.
+  window.setAlwaysOnTop(true, 'pop-up-menu');
 
   function snapshot(): OverlayDock {
     return dock && layout ? { side: dock.side, compact, layout: { compact: layout.compact, expanded: layout.expanded }, motion } : null;
   }
   function publishDock() { window.webContents.send('overlay:dock', snapshot()); }
 
-  function dockDisplay() {
-    return screen.getAllDisplays().find(item => item.id === dock?.displayId) ?? screen.getPrimaryDisplay();
+  function overlayDisplay() {
+    return dock ? screen.getAllDisplays().find(item => item.id === dock?.displayId) ?? screen.getPrimaryDisplay()
+      : screen.getDisplayNearestPoint({ x: anchor.x + width / 2, y: anchor.y + minHeight / 2 });
   }
 
   function windowRegion() {
@@ -49,6 +52,7 @@ export function createOverlay(
   }
 
   function applyShape() {
+    if (window.isMinimized()) return;
     const region = windowRegion(), frame = layout?.frame;
     // Keep the transparent viewport in place between poses. Resizing it here can
     // expose a frame with the old layout before Chromium repaints.
@@ -58,8 +62,7 @@ export function createOverlay(
   function place() {
     clearTimeout(motionTimer);
     motion = undefined;
-    const activeDisplay = dock ? dockDisplay()
-      : screen.getDisplayNearestPoint({ x: anchor.x + width / 2, y: anchor.y + minHeight / 2 });
+    const activeDisplay = overlayDisplay();
     const { workArea } = activeDisplay;
     if (dock && activeDisplay.id !== dock.displayId) {
       dock = { ...dock, displayId: activeDisplay.id };
@@ -145,11 +148,19 @@ export function createOverlay(
     trackingPointer = enabled;
     syncPointerTracking();
   }
-  window.on('show', syncPointerTracking);
-  window.on('hide', () => {
+  function pausePointerTracking() {
     stopCompactDrag();
     if (motion) finishDockMotion(motion);
+    collapseArmed = false;
+    outsideSince = undefined;
     clearTimeout(pointerTimer);
+  }
+  window.on('hide', pausePointerTracking);
+  window.on('minimize', pausePointerTracking);
+  window.on('show', syncPointerTracking);
+  window.on('restore', () => {
+    applyShape();
+    syncPointerTracking();
   });
   window.webContents.on('did-start-loading', () => {
     stopCompactDrag();
@@ -241,7 +252,7 @@ export function createOverlay(
       if (enabled || !dock) return;
       stopCompactDrag();
       if (!dock) return;
-      const bounds = dockBounds(dockDisplay().workArea, dock, height, false);
+      const bounds = dockBounds(overlayDisplay().workArea, dock, height, false);
       anchor = { x: bounds.x, y: bounds.y };
       dock = undefined;
       compact = false;
@@ -261,6 +272,11 @@ export function createOverlay(
           if (dock) publishDock();
         }
       }
+      const { workArea } = overlayDisplay();
+      const bar = dock ? dockWindowLayout(workArea, dock, minHeight) : undefined;
+      const inset = bar?.expanded.y ?? 0;
+      const y = bar ? bar.frame.y + inset : fitOverlay({ ...anchor, width, height: minHeight }, workArea).y;
+      return { room: workArea.y + workArea.height - y, inset };
     },
   };
 }

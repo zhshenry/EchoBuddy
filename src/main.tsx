@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type 
 import { createRoot } from 'react-dom/client';
 import { CaretDown, CaretLeft, CaretRight, ChatCircleDots, Circle, GearSix, Microphone, Stop, X } from '@phosphor-icons/react';
 import { botAvatarChoice, botAvatarColors } from '../shared/bot-avatar';
-import type { DesktopSnapshot } from '../shared/desktop';
+import { DEFAULT_SHORTCUTS, type DesktopSnapshot } from '../shared/desktop';
 import { initialMeetingCapture } from '../shared/meeting-contracts';
 import { RECOGNITION_LANGUAGES } from '../shared/speech-contracts';
 import { BotAvatar } from './avatars/BotAvatar';
@@ -16,10 +16,10 @@ import './widget/meeting.css';
 
 const desktop = window.echoBuddy;
 const initial: DesktopSnapshot = {
-  dictation: { phase: 'idle', sessionId: null, recordingStartedAt: null, pending: '', message: '', reveal: 0 },
+  dictation: { phase: 'idle', sessionId: null, recordingStartedAt: null, pending: '', message: '', reveal: 0, clearRevision: 0 },
   meeting: initialMeetingCapture,
   preferences: {
-    avatar: 'drop:coral', shortcut: 'Ctrl+Alt+M', shortcutActive: true,
+    avatar: 'drop:coral', shortcuts: { ...DEFAULT_SHORTCUTS }, shortcutActive: { dictation: true, meeting: true },
     recordingMode: 'dictation', writeTiming: 'sentence', meetingSources: ['microphone'], languages: [...RECOGNITION_LANGUAGES], dockOnEdge: true,
   },
   update: { current: '', enabled: false, phase: 'idle', message: '', progress: 0, version: '' },
@@ -47,15 +47,20 @@ function DockClock({ startedAt }: { startedAt: number }) {
 function App({ dictation, meeting: capture, preferences, update, dock }: DesktopSnapshot) {
   const [pane, setPane] = useState<Pane>(null);
   const [languagesOpen, setLanguagesOpen] = useState(false);
+  const [writingPending, setWritingPending] = useState(false);
   const [dismissed, setDismissed] = useState('');
   const shell = useRef<HTMLElement>(null);
+  const measureShell = useRef<(refresh?: boolean) => void>(null);
   const liveText = useRef<HTMLDivElement>(null);
   const dockPress = useRef<{ id: number; target: Element; x: number; y: number;
     screenX: number; screenY: number; dragging: boolean } | null>(null);
   const suppressDockClick = useRef(false);
   const { levels, lines, draft } = useCapture(dictation, preferences.writeTiming);
-  const { pending, message, reveal } = dictation;
-  const meeting = preferences.recordingMode === 'meeting';
+  const { pending, message, reveal, clearRevision } = dictation;
+  const previousClearRevision = useRef(clearRevision);
+  const hasTranscript = Boolean(pending || lines.length || draft);
+  const mode = capture.phase !== 'idle' ? 'meeting' : dictation.phase !== 'idle' ? 'dictation' : preferences.recordingMode;
+  const meeting = mode === 'meeting';
   const phase = meeting ? (capture.phase === 'saving' ? 'finishing' : capture.phase) : dictation.phase;
   const recordingStartedAt = meeting ? capture.startedAt : dictation.recordingStartedAt;
   const busy = phase !== 'idle';
@@ -63,6 +68,7 @@ function App({ dictation, meeting: capture, preferences, update, dock }: Desktop
   const canStop = recording || phase === 'preparing';
   const compact = dock?.compact === true;
   const motion = dock?.motion;
+  const dockInset = dock?.layout.expanded.y;
   const panelOpen = pane !== null;
   const updateBlocked = busy ? (meeting ? '会议录音保存后可安装' : '本次听写完成后可安装') : pending ? '请先写入或复制本次转写' : '';
   useLayoutEffect(() => {
@@ -70,20 +76,53 @@ function App({ dictation, meeting: capture, preferences, update, dock }: Desktop
     const element = shell.current;
     if (motion && window.matchMedia('(prefers-reduced-motion: reduce)').matches) desktop.finishDockMotion(motion);
     if (compact || motion || !element) return;
-    const observer = new ResizeObserver(() => {
-      const { paddingTop, paddingBottom } = getComputedStyle(document.body);
-      desktop.resize(element.getBoundingClientRect().height + Number.parseFloat(paddingTop) + Number.parseFloat(paddingBottom));
-    });
+    const { paddingTop, paddingBottom } = getComputedStyle(document.body);
+    const gutters = Number.parseFloat(paddingTop) + Number.parseFloat(paddingBottom);
+    let targetHeight = 0;
+    let reservedHeight = 0;
+    let request = 0;
+    const measure = (refresh = false) => {
+      const visible = element.getBoundingClientRect().height + gutters;
+      let final = visible;
+      for (const panel of element.querySelectorAll<HTMLElement>(':scope > .panel-transition')) {
+        final -= panel.getBoundingClientRect().height;
+        if (!panel.inert) final += panel.firstElementChild!.getBoundingClientRect().height;
+      }
+      const target = Math.ceil(final);
+      // Make room before revealing a panel and keep that space until it has closed.
+      const rendered = Math.ceil(visible);
+      const reserved = rendered === target ? target : Math.max(reservedHeight, rendered, target);
+      if (!refresh && target === targetHeight && reserved === reservedHeight) return;
+      targetHeight = target;
+      reservedHeight = reserved;
+      const id = ++request;
+      void desktop.resize(reserved).then(placement => {
+        if (id !== request || !placement) return;
+        element.style.setProperty('--panel-room', `${placement.room}px`);
+        element.style.setProperty('--panel-inset', `${placement.inset}px`);
+      });
+    };
+    measureShell.current = measure;
+    const observer = new ResizeObserver(() => measure());
     observer.observe(element);
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+      measureShell.current = null;
+      request++;
+      element.style.removeProperty('--panel-room');
+      element.style.removeProperty('--panel-inset');
+    };
   }, [compact, motion]);
+  useLayoutEffect(() => { measureShell.current?.(true); }, [pane, dockInset]);
   useEffect(() => { void desktop.setOverlayPanelOpen(panelOpen); }, [panelOpen]);
   useEffect(() => {
     if (reveal && pending) setPane('transcript');
   }, [reveal, pending]);
   useEffect(() => {
-    if (meeting && !pending) setPane(previous => previous === 'transcript' ? null : previous);
-  }, [meeting, pending]);
+    const cleared = previousClearRevision.current !== clearRevision;
+    previousClearRevision.current = clearRevision;
+    if (meeting && !pending && !cleared) setPane(previous => previous === 'transcript' ? null : previous);
+  }, [meeting, pending, clearRevision]);
   useEffect(() => desktop.onLanguagePanel(setLanguagesOpen), []);
   useEffect(() => {
     if (pane === 'transcript' && liveText.current) liveText.current.scrollTop = liveText.current.scrollHeight;
@@ -146,8 +185,9 @@ function App({ dictation, meeting: capture, preferences, update, dock }: Desktop
   } as CSSProperties;
   const avatar = <BotAvatar avatar={preferences.avatar} motionId="echobuddy-dictation"
     activity={recording ? 'working' : busy ? 'thinking' : 'idle'} />;
+  const recordTitle = preferences.shortcutActive[mode] ? label + ' · ' + preferences.shortcuts[mode] : label;
   const recordButton = (small: boolean) => <button type="button" className="power" disabled={phase === 'finishing'} aria-label={label}
-    title={label + ' · ' + preferences.shortcut} onClick={() => void desktop.toggle()}>
+    title={recordTitle} onClick={() => void desktop.toggle()}>
     {canStop || ((small || meeting) && phase === 'finishing') ? <Stop size={small ? 16 : 19} weight="fill" />
       : <Microphone size={small ? 19 : 22} weight="bold" />}
   </button>;
@@ -206,13 +246,16 @@ function App({ dictation, meeting: capture, preferences, update, dock }: Desktop
       <div className="panel inline-settings" onScroll={() => { if (languagesOpen) void desktop.closeLanguagePanel(); }}>
         <div className="row inline-settings-heading">
           <h2>设置</h2>
-          <button type="button" className="more-settings-button" title="打开更多设置" onClick={() => void desktop.openSettings()}>
+          <button type="button" className="more-settings-button" title="打开更多设置" onClick={() => {
+            setPane(null);
+            void desktop.openSettings();
+          }}>
             更多设置 <GearSix size={13} aria-hidden="true" />
           </button>
         </div>
         <section className="settings-section settings-inline-row">
           <h3>录音模式</h3>
-          <RecordingOptions mode={preferences.recordingMode} busy={busy} />
+          <RecordingOptions mode={mode} busy={busy} />
         </section>
         <section className="settings-section recording-mode-swap recording-mode-details">
           <div className="settings-inline-row" inert={meeting}>
@@ -233,14 +276,21 @@ function App({ dictation, meeting: capture, preferences, update, dock }: Desktop
     </PanelTransition>
     <PanelTransition id="transcript-panel" open={pane === 'transcript'}>
       <div className="panel transcript">
-        <div className="row"><strong>本次转写</strong></div>
+        <div className="row">
+          <strong>本次转写</strong>
+          <button type="button" className="transcript-clear" aria-label="清空本次转写"
+            disabled={busy || writingPending || !hasTranscript} onClick={() => void desktop.clearTranscript()}>清空</button>
+        </div>
         <div className="words" ref={liveText} role="log" aria-live="polite">
           {pending ? <p>{pending}</p> : <>{lines.map((line, i) => <p key={i}>{line}</p>)}{draft && <p className="draft">{draft}</p>}</>}
-          {!pending && !lines.length && !draft && <p className="empty">{busy ? '等待语音…' : '暂无转写内容'}</p>}
+          {!hasTranscript && <p className="empty">{busy ? '等待语音…' : '暂无转写内容'}</p>}
         </div>
         {pending && <div className="recover">
-          <button onClick={() => void desktop.insertPending()}>写入当前光标</button>
-          <button onClick={() => void desktop.copyPending()}>复制文字</button>
+          <button type="button" disabled={writingPending} onClick={() => {
+            setWritingPending(true);
+            void desktop.insertPending().finally(() => setWritingPending(false));
+          }}>写入当前光标</button>
+          <button type="button" disabled={writingPending} onClick={() => void desktop.copyPending()}>复制文字</button>
         </div>}
       </div>
     </PanelTransition>

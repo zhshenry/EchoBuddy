@@ -12,9 +12,11 @@ const statuses: MeetingStatus[] = ['recording', 'queued', 'transcribing', 'ready
 const time = new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
 
 export interface MeetingBatch { startFrame: number; endFrame: number; lines: MeetingLine[]; }
+export type MeetingUpdate = Partial<Pick<MeetingRecord, 'title' | 'status' | 'processedMs' | 'error'>>;
 
 export class MeetingStore {
   private readonly records = new Map<string, MeetingRecord>();
+  private readonly writes = new Map<string, Promise<unknown>>();
 
   constructor(private readonly root: string) {}
 
@@ -71,7 +73,36 @@ export class MeetingStore {
     return this.save(record);
   }
 
-  async save(record: MeetingRecord): Promise<MeetingRecord> {
+  save(record: MeetingRecord): Promise<MeetingRecord> {
+    return this.enqueueWrite(record.id, () => this.write(record));
+  }
+
+  update(id: string, changes: MeetingUpdate): Promise<MeetingRecord> {
+    return this.enqueueWrite(id, () => {
+      const record = this.get(id);
+      if (!record) throw new Error('找不到这场会议。');
+      return this.write({ ...record, ...changes });
+    });
+  }
+
+  trash(id: string, moveToTrash: (path: string) => Promise<void>): Promise<void> {
+    return this.enqueueWrite(id, async () => {
+      const record = this.get(id);
+      if (!record) return;
+      if (!record.durationMs || record.status === 'recording') throw new Error('录音保存后可删除。');
+      await moveToTrash(this.directory(id));
+      this.records.delete(id);
+    });
+  }
+
+  private async enqueueWrite<T>(id: string, action: () => Promise<T>): Promise<T> {
+    const write = Promise.resolve(this.writes.get(id)).catch(() => {}).then(action);
+    this.writes.set(id, write);
+    try { return await write; }
+    finally { if (this.writes.get(id) === write) this.writes.delete(id); }
+  }
+
+  private async write(record: MeetingRecord): Promise<MeetingRecord> {
     const path = join(this.directory(record.id), 'meeting.json');
     const handle = await open(path + '.tmp', 'w');
     try {

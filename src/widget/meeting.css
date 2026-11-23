@@ -34,23 +34,51 @@
   font-size: var(--secondary-text-size); font-weight: var(--semibold);
 }
 .meeting-history-item {
-  display: grid; gap: 4px; justify-items: start; width: 100%; min-height: 49px; margin-bottom: 3px;
+  display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; justify-items: start; width: 100%; min-height: 49px; margin-bottom: 3px;
   padding: 8px 11px; border: 0; border-radius: 8px; text-align: start; background: transparent;
 }
 .meeting-history-item:is(:hover, [aria-current="true"]) { background: var(--tint); }
-.meeting-history-item strong { font-weight: var(--semibold); }
+.meeting-history-item strong { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: var(--semibold); }
 .meeting-history-item span { color: var(--muted); font-size: var(--secondary-text-size); font-variant-numeric: tabular-nums; }
 .meeting-details {
   overflow: auto; scrollbar-gutter: stable; min-width: 0; min-height: 0; padding: 23px 25px 24px;
 }
 .meeting-details h2 { margin: 0; font-size: 22px; line-height: var(--compact-line-height); }
 .meeting-detail-header { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: start; gap: 7px 12px; }
+.meeting-heading { flex: 1 1 8rem; min-width: 0; }
+.meeting-header-actions {
+  display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; max-width: 100%; margin-left: auto;
+}
+.meeting-title-control {
+  display: block; max-width: 100%; height: 1lh; padding: 0; border: 0; border-radius: 4px;
+  background: transparent; color: inherit; font: inherit; text-align: start;
+}
+button.meeting-title-control { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+button.meeting-title-control:hover, .meeting-title-error { color: var(--acc-deep); }
+input.meeting-title-control { width: 100%; outline: 1px solid var(--line); outline-offset: 2px; }
+input.meeting-title-control:focus { outline: 2px solid var(--acc-deep); }
 .meeting-detail-header p, .meeting-subtle, .meeting-empty p { margin: 4px 0 0; color: var(--muted); }
-.meeting-folder, .meeting-retry {
+.meeting-folder, .meeting-delete, .meeting-retry, .meeting-delete-dialog button {
   display: inline-flex; gap: 6px; align-items: center; min-height: var(--control-height);
   padding: 0 9px; border: 0; border-radius: 7px; background: var(--meeting-shell); color: var(--muted); white-space: nowrap;
 }
-.meeting-folder:hover, .meeting-retry:hover:enabled { color: var(--acc-deep); background: var(--tint); }
+.meeting-folder:hover, .meeting-delete:hover, .meeting-retry:hover:enabled,
+.meeting-delete-dialog button:not(.meeting-delete-confirm):hover:enabled {
+  color: var(--acc-deep); background: var(--tint);
+}
+.meeting-delete { color: var(--acc-deep); }
+.meeting-delete-dialog {
+  width: min(360px, calc(100% - 32px)); max-height: calc(100% - 32px); margin: auto; padding: 20px;
+  border: 1px solid var(--line); border-radius: 14px; background: var(--surface); color: var(--ink);
+  box-shadow: 0 5px 12px #20232b26; overflow-wrap: anywhere;
+}
+.meeting-delete-dialog::backdrop { inset: 12px; border-radius: 14px; background: color-mix(in srgb, var(--ink) 32%, transparent); }
+.meeting-delete-dialog h3 { margin: 0; font-size: 16px; }
+.meeting-delete-dialog p { margin: 8px 0 0; }
+.meeting-delete-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+.meeting-delete-dialog .meeting-delete-confirm { min-width: 96px; justify-content: center; background: var(--acc-deep); color: white; }
+.meeting-delete-dialog .meeting-delete-confirm:hover:enabled { background: color-mix(in srgb, var(--acc-deep) 84%, black); }
+.meeting-delete-dialog button:disabled { opacity: .65; }
 .meeting-player {
   display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 11px;
   margin-top: 15px; padding: 8px 11px; border: 1px solid var(--line); border-radius: 10px; background: var(--meeting-shell);
@@ -103,7 +131,7 @@
   .meeting-day { display: flex; align-items: center; gap: 6px; flex: none; }
   .meeting-day + .meeting-day { margin-top: 0; }
   .meeting-day h2, .meeting-history-item { margin: 0; }
-  .meeting-history-item { width: auto; white-space: nowrap; }
+  .meeting-history-item { width: auto; max-width: 176px; white-space: nowrap; }
   .meeting-details { padding: 15px; }
   .meeting-transcript-header { flex-wrap: wrap; }
   .meeting-transcript-line { grid-template-columns: auto auto 1fr; }

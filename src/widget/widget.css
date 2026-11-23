@@ -56,9 +56,12 @@ button:focus-visible { outline: 2px solid var(--acc-deep); outline-offset: 2px; 
 }
 .shell {
   --panel-motion: 200ms cubic-bezier(.22, .61, .36, 1);
+  --panel-top: max(var(--panel-inset, var(--dock-expanded-y, 0px)), calc(100vh - var(--panel-room, 100vh)));
   width: 100%; overflow: hidden; background: var(--surface); border: 1px solid #181d240e; border-radius: var(--overlay-radius);
   box-shadow: 0 4px 9px -4px #20232b2b, 0 1px 2px #20232b10; pointer-events: auto;
   transition: border-radius var(--panel-motion);
+  /* Keep the bar at its anchor until the revealed panel needs space above it. */
+  translate: 0 max(0px, min(var(--panel-top), calc(100vh - 2 * var(--overlay-gutter-y) - 100%)));
 }
 .shell:has(.panel-transition:not([inert]) > :is(.panel, .update-notice)) { border-radius: 26px; }
 .shell:has(#settings-panel:not([inert])) { --recording-mode-motion: var(--panel-motion); }
@@ -140,7 +143,7 @@ button:focus-visible { outline: 2px solid var(--acc-deep); outline-offset: 2px; 
 }
 .overlay[data-side]:not(.dock-motion) .shell {
   position: absolute;
-  left: var(--dock-open-x); top: var(--dock-open-y); width: var(--dock-open-width);
+  left: var(--dock-open-x); top: var(--overlay-gutter-y); width: var(--dock-open-width);
 }
 .dock-motion {
   --dock-motion-duration: 260ms;
@@ -188,6 +191,7 @@ button:focus-visible { outline: 2px solid var(--acc-deep); outline-offset: 2px; 
   left: 0;
   top: max(0px, calc((100% - var(--dock-open-height)) / 2));
   opacity: clamp(0, 2.5 * var(--dock-progress) - 1.5, 1);
+  translate: none;
 }
 .dock-motion :is(.tools > .bot-avatar, .recording-mode-status) { -webkit-app-region: no-drag; }
 
@@ -217,7 +221,7 @@ button:focus-visible { outline: 2px solid var(--acc-deep); outline-offset: 2px; 
 }
 .key-button, .switch button { border: 0; border-radius: 7px; background: transparent; }
 .key-button { gap: 7px; padding: 4px 6px; color: var(--muted); }
-.key-button[aria-pressed="true"], .key-button:hover { color: var(--acc-deep); background: var(--tint); }
+.key-button[aria-pressed="true"], .key-button:hover:enabled { color: var(--acc-deep); background: var(--tint); }
 .keys { display: inline-flex; gap: 3px; vertical-align: middle; }
 kbd {
   display: inline-flex; align-items: center; justify-content: center; border: 1px solid #dedfe1; border-bottom-width: 2px;
@@ -263,6 +267,12 @@ kbd {
 }
 .update-notice span { flex: 1; overflow-wrap: anywhere; }
 .transcript { padding-bottom: 18px; }
+.transcript-clear {
+  min-height: var(--compact-control-height); padding: 0 8px; border: 0; border-radius: 7px;
+  background: transparent; color: var(--muted); font-size: var(--secondary-text-size);
+}
+.transcript-clear:hover:enabled { background: var(--tint); color: var(--acc-deep); }
+.transcript-clear:disabled, .recover button:disabled { opacity: .55; }
 .words { max-height: 136px; overflow: auto; margin-top: 9px; line-height: var(--transcript-line-height); overflow-wrap: anywhere; }
 .words p { margin: 0; }
 .words p + p { margin-top: 4px; }

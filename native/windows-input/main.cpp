@@ -18,7 +18,8 @@
 
 using Microsoft::WRL::ComPtr;
 
-enum class PasteMode { none, editable, chat };
+enum class PasteMode { none, editable, chat, unverified };
+enum class CaptureMode { automatic, manual };
 
 struct Target {
     HWND foreground = nullptr;
@@ -32,6 +33,7 @@ struct Target {
     DWORD selectionStart = 0;
     DWORD selectionEnd = 0;
     ComPtr<IUIAutomationElement> element;
+    ComPtr<IUIAutomationElement> focusedChild;
     ComPtr<IUIAutomationTextRange> selection;
 
     bool hasCaret() const { return nativeEdit || selection || caret; }
@@ -41,6 +43,17 @@ struct Target {
 static GUITHREADINFO guiThread(DWORD thread) {
     GUITHREADINFO info{sizeof(info)};
     return GetGUIThreadInfo(thread, &info) ? info : GUITHREADINFO{};
+}
+
+static Target foregroundTarget(DWORD appPid, GUITHREADINFO& info) {
+    Target target;
+    target.foreground = GetForegroundWindow();
+    const DWORD thread = GetWindowThreadProcessId(target.foreground, &target.process);
+    if (!thread || !target.process || target.process == appPid) return {};
+    info = guiThread(thread);
+    target.focus = info.hwndFocus;
+    if (target.focus && !IsWindowEnabled(target.focus)) return {};
+    return target;
 }
 
 static bool isNativeEdit(HWND focus) {
@@ -81,7 +94,7 @@ static InputApplication classifyApplication(DWORD pid) {
     return InputApplication::standard;
 }
 
-static ComPtr<IUIAutomationTextRange> selectionOf(IUIAutomationElement* element) {
+static ComPtr<IUIAutomationTextRange> selectionOf(IUIAutomationElement* element, bool requireActive = false) {
     ComPtr<IUIAutomationTextPattern> text;
     ComPtr<IUIAutomationTextRangeArray> selections;
     ComPtr<IUIAutomationTextRange> range;
@@ -89,19 +102,23 @@ static ComPtr<IUIAutomationTextRange> selectionOf(IUIAutomationElement* element)
     if (SUCCEEDED(element->GetCurrentPatternAs(UIA_TextPatternId, IID_PPV_ARGS(&text))) && text &&
         SUCCEEDED(text->GetSelection(&selections)) && selections &&
         SUCCEEDED(selections->get_Length(&count))) {
-        if (count == 1 && SUCCEEDED(selections->GetElement(0, &range))) return range;
         if (count > 1) return nullptr;
+        if (count == 1 && SUCCEEDED(selections->GetElement(0, &range))) {
+            BOOL focused = FALSE;
+            if (!requireActive || (SUCCEEDED(element->get_CurrentHasKeyboardFocus(&focused)) && focused)) return range;
+        }
     }
     ComPtr<IUIAutomationTextPattern2> extended;
+    ComPtr<IUIAutomationTextRange> caret;
     BOOL active = FALSE;
     if (SUCCEEDED(element->GetCurrentPatternAs(UIA_TextPattern2Id, IID_PPV_ARGS(&extended))) && extended &&
-        SUCCEEDED(extended->GetCaretRange(&active, &range)) && active) return range;
+        SUCCEEDED(extended->GetCaretRange(&active, &caret)) && active && caret) return range ? range : caret;
     return nullptr;
 }
 
 enum class Editability { unknown, readOnly, writable };
 
-static Editability editability(IUIAutomationElement* element, IUIAutomationTextRange* range, bool chat) {
+static Editability editability(IUIAutomationElement* element, IUIAutomationTextRange* range, bool chat, bool manual = false) {
     if (range) {
         VARIANT readOnly;
         VariantInit(&readOnly);
@@ -113,18 +130,63 @@ static Editability editability(IUIAutomationElement* element, IUIAutomationTextR
     ComPtr<IUIAutomationValuePattern> value;
     BOOL readOnly = TRUE;
     CONTROLTYPEID kind = 0;
-    if (SUCCEEDED(element->get_CurrentControlType(&kind)) && kind == UIA_EditControlTypeId &&
+    // Rich text editors can expose the active input as a Document control.
+    if (SUCCEEDED(element->get_CurrentControlType(&kind)) &&
+        (kind == UIA_EditControlTypeId || kind == UIA_DocumentControlTypeId) &&
         SUCCEEDED(element->GetCurrentPatternAs(UIA_ValuePatternId, IID_PPV_ARGS(&value))) && value &&
-        SUCCEEDED(value->get_CurrentIsReadOnly(&readOnly))) return readOnly ? Editability::readOnly : Editability::writable;
-    if (chat) {
+        SUCCEEDED(value->get_CurrentIsReadOnly(&readOnly))) {
+        if (readOnly) return Editability::readOnly;
+        BOOL focused = FALSE;
+        if (kind == UIA_EditControlTypeId || (range && SUCCEEDED(element->get_CurrentHasKeyboardFocus(&focused)) && focused))
+            return Editability::writable;
+    }
+    if (chat || manual) {
         ComPtr<IUIAutomationLegacyIAccessiblePattern> legacy;
         DWORD state = 0, role = 0;
         if (SUCCEEDED(element->GetCurrentPatternAs(UIA_LegacyIAccessiblePatternId, IID_PPV_ARGS(&legacy))) && legacy &&
             SUCCEEDED(legacy->get_CurrentState(&state))) {
             if (state & (STATE_SYSTEM_READONLY | STATE_SYSTEM_PROTECTED)) return Editability::readOnly;
-            if ((state & STATE_SYSTEM_FOCUSED) && (state & STATE_SYSTEM_FOCUSABLE) &&
+            if (chat && (state & STATE_SYSTEM_FOCUSED) && (state & STATE_SYSTEM_FOCUSABLE) &&
                 SUCCEEDED(legacy->get_CurrentRole(&role)) && role == ROLE_SYSTEM_TEXT) return Editability::writable;
         }
+    }
+    return Editability::unknown;
+}
+
+static bool enabledTextTarget(IUIAutomationElement* element) {
+    BOOL enabled = FALSE, password = TRUE;
+    return SUCCEEDED(element->get_CurrentIsEnabled(&enabled)) && enabled &&
+        SUCCEEDED(element->get_CurrentIsPassword(&password)) && !password;
+}
+
+static bool belongsToWindow(IUIAutomationElement* element, const Target& target) {
+    int process = 0;
+    UIA_HWND window = nullptr;
+    return SUCCEEDED(element->get_CurrentProcessId(&process)) && static_cast<DWORD>(process) == target.process &&
+        SUCCEEDED(element->get_CurrentNativeWindowHandle(&window)) &&
+        (!window || GetAncestor(static_cast<HWND>(window), GA_ROOT) == target.foreground);
+}
+
+static Editability findParentEditor(IUIAutomation* automation, Target& target) {
+    ComPtr<IUIAutomationTreeWalker> tree;
+    if (!belongsToWindow(target.element.Get(), target) || FAILED(automation->get_RawViewWalker(&tree)) || !tree)
+        return Editability::unknown;
+    auto child = target.element;
+    const ULONGLONG deadline = GetTickCount64() + 150;
+    for (int depth = 0; depth < 4 && GetTickCount64() < deadline; ++depth) {
+        ComPtr<IUIAutomationElement> parent;
+        if (FAILED(tree->GetParentElement(child.Get(), &parent)) || !parent || !belongsToWindow(parent.Get(), target)) break;
+        if (!enabledTextTarget(parent.Get())) return Editability::readOnly;
+        auto selection = selectionOf(parent.Get(), true);
+        const auto editable = editability(parent.Get(), selection.Get(), false);
+        if (editable == Editability::readOnly) return editable;
+        if (selection && editable == Editability::writable) {
+            target.focusedChild = std::move(target.element);
+            target.element = std::move(parent);
+            target.selection = std::move(selection);
+            return editable;
+        }
+        child = std::move(parent);
     }
     return Editability::unknown;
 }
@@ -146,15 +208,11 @@ static bool isSelectedExcelCell(IUIAutomationElement* element) {
         SUCCEEDED(item->get_CurrentIsSelected(&selected)) && selected;
 }
 
-static Target capture(IUIAutomation* automation, DWORD appPid, ChatTargetWatch* watch = nullptr,
-    DictationShortcut shortcut = {}, bool streaming = false) {
-    Target target;
-    target.foreground = GetForegroundWindow();
-    const DWORD thread = GetWindowThreadProcessId(target.foreground, &target.process);
-    if (!thread || !target.process || target.process == appPid) return {};
-    const auto info = guiThread(thread);
-    target.focus = info.hwndFocus;
-    if (target.focus && !IsWindowEnabled(target.focus)) return {};
+static Target capture(IUIAutomation* automation, DWORD appPid, CaptureMode mode = CaptureMode::automatic,
+    ChatTargetWatch* watch = nullptr, DictationShortcut shortcut = {}, bool streaming = false) {
+    GUITHREADINFO info{};
+    Target target = foregroundTarget(appPid, info);
+    if (!target.foreground) return {};
     const auto application = classifyApplication(target.process);
     const bool chat = application == InputApplication::chat;
     const bool excel = application == InputApplication::excel && windowClassIs(target.foreground, L"XLMAIN");
@@ -168,20 +226,30 @@ static Target capture(IUIAutomation* automation, DWORD appPid, ChatTargetWatch* 
     if (excel && windowClassIs(target.focus, L"EXCEL6") && captureWindowCaret(target, info)) return target;
     if (watch && chat && !streaming) watch->start(target.foreground, appPid, shortcut);
 
-    BOOL enabled = FALSE, password = TRUE;
-    if (!automation || FAILED(automation->GetFocusedElement(&target.element)) || !target.element)
-        return chat ? target : Target{};
-    if (FAILED(target.element->get_CurrentIsEnabled(&enabled)) || !enabled ||
-        FAILED(target.element->get_CurrentIsPassword(&password)) || password) return {};
+    DWORD focusProcess = 0;
+    const bool allowUnverified = mode == CaptureMode::manual && target.focus &&
+        GetWindowThreadProcessId(target.focus, &focusProcess) && focusProcess == target.process &&
+        GetAncestor(target.focus, GA_ROOT) == target.foreground;
+    if (!automation || FAILED(automation->GetFocusedElement(&target.element)) || !target.element) {
+        if (allowUnverified) target.paste = PasteMode::unverified;
+        return target.usesClipboard() ? target : Target{};
+    }
+    if (!enabledTextTarget(target.element.Get())) return {};
     if (excel && windowClassIs(target.focus, L"EXCEL7") && isSelectedExcelCell(target.element.Get()) &&
         captureWindowCaret(target, info)) {
         target.excelCell = true;
         return target;
     }
     target.selection = selectionOf(target.element.Get());
-    const auto editable = editability(target.element.Get(), target.selection.Get(), chat);
-    if (editable == Editability::readOnly || (editable == Editability::unknown && !chat)) return {};
-    if (editable == Editability::unknown) target.selection.Reset();
+    auto editable = editability(target.element.Get(), target.selection.Get(), chat, allowUnverified);
+    if (editable == Editability::unknown && application == InputApplication::standard)
+        editable = findParentEditor(automation, target);
+    if (editable == Editability::readOnly) return {};
+    if (editable == Editability::unknown) {
+        target.selection.Reset();
+        if (allowUnverified) target.paste = PasteMode::unverified;
+        if (!target.usesClipboard()) return {};
+    }
     if (application == InputApplication::standard && target.focus && editable == Editability::writable)
         target.paste = PasteMode::editable;
     if (target.usesClipboard() && editable == Editability::writable && !target.selection) captureWindowCaret(target, info);
@@ -195,11 +263,15 @@ static bool sameFocus(const Target& first, const Target& second) {
         first.process == second.process && first.focus == second.focus;
 }
 
+static bool sameElement(IUIAutomation* automation, IUIAutomationElement* first, IUIAutomationElement* second) {
+    if (!first || !second) return first == second;
+    BOOL same = FALSE;
+    return automation && SUCCEEDED(automation->CompareElements(first, second, &same)) && same;
+}
+
 static bool sameEditor(IUIAutomation* automation, const Target& saved, const Target& current) {
-    if (!sameFocus(saved, current) || bool(saved.element) != bool(current.element)) return false;
-    BOOL sameElement = FALSE;
-    return !saved.element || (automation &&
-        SUCCEEDED(automation->CompareElements(saved.element.Get(), current.element.Get(), &sameElement)) && sameElement);
+    return sameFocus(saved, current) && sameElement(automation, saved.element.Get(), current.element.Get()) &&
+        sameElement(automation, saved.focusedChild.Get(), current.focusedChild.Get());
 }
 
 static bool sameTarget(IUIAutomation* automation, const Target& saved, const Target& current, const ChatTargetWatch& watch) {
@@ -426,14 +498,20 @@ private:
 
 static const char* pasteText(IUIAutomation* automation, DWORD appPid, const Target* saved, const Target& current,
     const std::wstring& text, ULONGLONG deadline, const ChatTargetWatch& watch, bool streaming) {
-    const auto guard = saved && (streaming || !saved->hasCaret()) ? &watch : nullptr;
+    const ChatTargetWatch* guard = saved && (streaming || !saved->hasCaret()) ? &watch : nullptr;
+    ChatTargetWatch manualWatch;
+    if (current.paste == PasteMode::unverified) {
+        manualWatch.start(current.foreground, appPid, {});
+        if (!manualWatch.watching() || !manualWatch.unchanged()) return "moved";
+        guard = &manualWatch;
+    }
     ClipboardPaste clipboard(current, text, guard);
     if (!clipboard.snapshot()) return "unavailable";
-    const Target confirmed = capture(automation, appPid);
+    const Target confirmed = capture(automation, appPid, saved ? CaptureMode::automatic : CaptureMode::manual);
     if (!confirmed.usesClipboard() || !sameEditor(automation, current, confirmed) ||
         (saved && !sameTarget(automation, *saved, confirmed, watch)) ||
         (!saved && current.hasCaret() && !sameTarget(automation, current, confirmed, watch)) ||
-        !stillFocused(confirmed)) return "moved";
+        (guard && !guard->unchanged()) || !stillFocused(confirmed)) return "moved";
     // Leave time for the paste and clipboard restoration before the helper can time out.
     if (GetTickCount64() > deadline || !clipboard.publish()) return "unavailable";
     if (!stillFocused(confirmed) || (guard && !guard->unchanged())) return "moved";
@@ -451,7 +529,7 @@ static const char* pasteText(IUIAutomation* automation, DWORD appPid, const Targ
         SendInput(ARRAYSIZE(keys) - release, keys + release, sizeof(INPUT));
     }
     if (sent < 2) return "unavailable";
-    return clipboard.waitForRead() && sent == ARRAYSIZE(keys) ? "written" : "partial";
+    return clipboard.waitForRead() && sent == ARRAYSIZE(keys) && current.paste != PasteMode::unverified ? "written" : "partial";
 }
 
 static int hexDigit(char c) {
@@ -549,16 +627,21 @@ static const char* insertText(IUIAutomation* automation, DWORD appPid, const Tar
     if (next && !watch.unchanged()) return "moved";
     const ULONGLONG started = GetTickCount64();
     const ULONGLONG pasteDeadline = started + 2900;
+    GUITHREADINFO originalInfo{};
+    const Target manualTarget = saved ? Target{} : foregroundTarget(appPid, originalInfo);
+    const HWND originalWindow = saved ? saved->foreground : manualTarget.foreground;
+    if (!originalWindow) return "moved";
     // The stop shortcut fires on keydown, and a ready transcript can arrive before keyup.
     const ULONGLONG releaseDeadline = started + 1500;
     while (modifiersDown()) {
-        if (saved && GetForegroundWindow() != saved->foreground) return "moved";
+        if (GetForegroundWindow() != originalWindow) return "moved";
         if (GetTickCount64() >= releaseDeadline) return "unavailable";
         Sleep(10);
     }
 
-    Target current = capture(automation, appPid);
-    if (!current.foreground || (saved && !sameTarget(automation, *saved, current, watch)) || (next && !watch.unchanged())) return "moved";
+    Target current = capture(automation, appPid, saved ? CaptureMode::automatic : CaptureMode::manual);
+    if ((saved ? !sameTarget(automation, *saved, current, watch) : !sameFocus(manualTarget, current)) ||
+        (next && !watch.unchanged())) return "moved";
     if (current.usesClipboard()) {
         const auto check = current.paste == PasteMode::editable ? preparePasteCheck(current.selection.Get(), text) : std::nullopt;
         const char* result = pasteText(automation, appPid, saved, current, text, pasteDeadline, watch, next != nullptr);
@@ -633,7 +716,7 @@ int main(int argc, char** argv) {
                 std::string verb;
                 DictationShortcut shortcut;
                 arguments >> verb >> shortcut.key >> shortcut.modifiers;
-                saved = capture(automation.Get(), appPid, &watch, shortcut, streaming);
+                saved = capture(automation.Get(), appPid, CaptureMode::automatic, &watch, shortcut, streaming);
                 const bool captured = saved.foreground && (streaming
                     ? watch.watching() && watch.unchanged() && (saved.hasCaret() || saved.usesClipboard())
                     : (watch.watching() ? watch.unchanged() : saved.hasCaret()));
@@ -650,6 +733,7 @@ int main(int argc, char** argv) {
                 saved = std::move(next);
                 if (!saved.foreground) watch.stop();
             } else if (command.rfind("current ", 0) == 0) {
+                watch.stop();
                 response = insertText(automation.Get(), appPid, nullptr, decodeText(command.substr(8)), watch);
                 saved = {};
             }

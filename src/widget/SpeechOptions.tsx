@@ -1,7 +1,7 @@
 import { useEffect, useRef, type CSSProperties } from 'react';
 import { CaretDown, Check, X } from '@phosphor-icons/react';
 import { botAvatarChoice, botAvatarColors } from '../../shared/bot-avatar';
-import { AVAILABLE_RECORDING_MODES, SHORT_DICTATION_MAX_SECONDS, type Preferences, type RecordingMode, type WriteTiming } from '../../shared/desktop';
+import { AVAILABLE_RECORDING_MODES, RECORDING_MODE_NAMES, SHORT_DICTATION_MAX_SECONDS, type Preferences, type RecordingMode, type WriteTiming } from '../../shared/desktop';
 import { MEETING_MAX_SECONDS, MEETING_SOURCES, MEETING_SOURCE_NAMES, type MeetingSource } from '../../shared/meeting-contracts';
 import { RECOGNITION_LANGUAGES, type RecognitionLanguage } from '../../shared/speech-contracts';
 
@@ -10,8 +10,8 @@ const languageNames: Record<RecognitionLanguage, string> = {
 };
 
 const modes = [
-  { id: 'dictation', label: '短听写', detail: `最多 ${SHORT_DICTATION_MAX_SECONDS / 60} 分钟，到时自动转写` },
-  { id: 'meeting', label: '会议录音', detail: `最长可录 ${MEETING_MAX_SECONDS / 3600} 小时，到时自动保存` },
+  { id: 'dictation', detail: `最多 ${SHORT_DICTATION_MAX_SECONDS / 60} 分钟，到时自动转写` },
+  { id: 'meeting', detail: `最长可录 ${MEETING_MAX_SECONDS / 3600} 小时，到时自动保存` },
 ] as const;
 
 export function RecordingOptions({ mode, busy }: { mode: RecordingMode; busy: boolean }) {
@@ -21,7 +21,7 @@ export function RecordingOptions({ mode, busy }: { mode: RecordingMode; busy: bo
       <input className="visually-hidden" type="radio" name="recording-mode" value={item.id} checked={mode === item.id}
         disabled={!AVAILABLE_RECORDING_MODES.includes(item.id)} aria-description={item.detail}
         onChange={() => void window.echoBuddy.setRecordingMode(item.id)} />
-      <span>{item.label}</span>
+      <span>{RECORDING_MODE_NAMES[item.id]}</span>
     </label>)}
   </fieldset>;
 }
