@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type PointerEvent, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { CaretDown, CaretLeft, CaretRight, ChatCircleDots, Circle, GearSix, Microphone, Stop, X } from '@phosphor-icons/react';
 import { botAvatarChoice, botAvatarColors } from '../shared/bot-avatar';
@@ -50,6 +50,9 @@ function App({ dictation, meeting: capture, preferences, update, dock }: Desktop
   const [dismissed, setDismissed] = useState('');
   const shell = useRef<HTMLElement>(null);
   const liveText = useRef<HTMLDivElement>(null);
+  const dockPress = useRef<{ id: number; target: Element; x: number; y: number;
+    screenX: number; screenY: number; dragging: boolean } | null>(null);
+  const suppressDockClick = useRef(false);
   const { levels, lines, draft } = useCapture(dictation, preferences.writeTiming);
   const { pending, message, reveal } = dictation;
   const meeting = preferences.recordingMode === 'meeting';
@@ -95,6 +98,32 @@ function App({ dictation, meeting: capture, preferences, update, dock }: Desktop
     if (languagesOpen) void desktop.closeLanguagePanel();
     setPane(old => old === value ? null : value);
   }
+  function beginDockPress(event: PointerEvent<HTMLElement>) {
+    if (motion || !event.isPrimary || event.button !== 0 || !(event.target instanceof Element)) return;
+    const target = event.target.closest('button');
+    if (!target) return;
+    target.setPointerCapture(event.pointerId);
+    suppressDockClick.current = false;
+    dockPress.current = { id: event.pointerId, target, x: event.clientX, y: event.clientY,
+      screenX: event.screenX, screenY: event.screenY, dragging: false };
+  }
+  function moveDockPress(event: PointerEvent<HTMLElement>) {
+    const press = dockPress.current;
+    if (!press || press.id !== event.pointerId || press.dragging ||
+        Math.hypot(event.screenX - press.screenX, event.screenY - press.screenY) < 4) return;
+    press.dragging = true;
+    press.target = event.currentTarget;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    suppressDockClick.current = true;
+    desktop.dragCompact({ x: press.x, y: press.y });
+  }
+  function endDockPress(event: PointerEvent<HTMLElement>) {
+    const press = dockPress.current;
+    if (!press || press.id !== event.pointerId ||
+        (event.type === 'lostpointercapture' && press.target !== event.target)) return;
+    dockPress.current = null;
+    if (press.dragging) desktop.dragCompact(null);
+  }
   useEffect(() => {
     function keydown(event: KeyboardEvent) {
       if (event.key !== 'Escape' || !pane) return;
@@ -125,7 +154,14 @@ function App({ dictation, meeting: capture, preferences, update, dock }: Desktop
   const Caret = dock?.side === 'top' ? CaretDown : dock?.side === 'left' ? CaretRight : CaretLeft;
   const compactBar = dock && (compact || motion)
     ? <section className="edge-dock" role="group" aria-label={meeting ? 'EchoBuddy 贴边会议录音' : 'EchoBuddy 贴边听写'}
-      data-side={dock.side} data-phase={phase} inert={!compact}>
+      data-side={dock.side} data-phase={phase} inert={!compact}
+      onPointerDown={beginDockPress} onPointerMove={moveDockPress} onPointerUp={endDockPress}
+      onPointerCancel={endDockPress} onLostPointerCapture={endDockPress} onClickCapture={event => {
+        if (event.detail > 0 && suppressDockClick.current) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+      }}>
       <button type="button" className="dock-avatar" aria-label="展开 EchoBuddy" title="展开 EchoBuddy" onClick={() => void desktop.expandOverlay()}>
         {avatar}
       </button>

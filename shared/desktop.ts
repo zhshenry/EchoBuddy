@@ -86,6 +86,7 @@ export interface DesktopBridge {
   openMeetingFolder(id: string): Promise<string>;
   resize(height: number): void;
   expandOverlay(): Promise<void>;
+  dragCompact(point: OverlayPointer): void;
   finishDockMotion(id: number): void;
   setOverlayPanelOpen(open: boolean): Promise<void>;
   toggleLanguagePanel(anchor: LanguagePanelAnchor, keyboard: boolean): Promise<void>;

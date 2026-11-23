@@ -149,22 +149,19 @@ async function start() {
     if (quitting) return;
     closeLanguagePanel();
     settingsDestination = { page, meetingId: id };
-    if (settingsWindow?.isMinimized()) settingsWindow.restore();
-    const current = settingsWindow?.getBounds();
-    const { workArea } = screen.getDisplayMatching(current ?? window.getBounds());
-    const [width, height] = page === 'meetings' ? [960, 580] : [640, 456];
-    const center = current ?? workArea;
-    const bounds = fitOverlay({
-      x: center.x + (center.width - width) / 2,
-      y: center.y + (center.height - height) / 2,
-      width, height,
-    }, workArea);
     if (settingsWindow) {
-      if (current && (bounds.width !== current.width || bounds.height !== current.height)) settingsWindow.setBounds(bounds);
+      if (settingsWindow.isMinimized()) settingsWindow.restore();
       settingsWindow.webContents.send('settings:page', settingsDestination);
       settingsWindow.show();
       return;
     }
+    const { workArea } = screen.getDisplayMatching(window.getBounds());
+    const width = 960, height = 580;
+    const bounds = fitOverlay({
+      x: workArea.x + (workArea.width - width) / 2,
+      y: workArea.y + (workArea.height - height) / 2,
+      width, height,
+    }, workArea);
     const target = settingsWindow = new BrowserWindow({
       ...bounds, show: false, frame: false, transparent: true, resizable: false,
       maximizable: false, fullscreenable: false, title: 'EchoBuddy 设置', icon,
@@ -359,6 +356,7 @@ async function start() {
   handle('overlay:resize', overlay.resize);
   handle('overlay:track-pointer', (enabled: boolean) => overlay.trackPointer(enabled === true));
   handle('overlay:expand', overlay.expand);
+  handle('overlay:compact-drag', overlay.dragCompact);
   handle('overlay:dock-motion-finished', overlay.finishDockMotion);
   handle('overlay:panel-open', (open: boolean) => overlay.setPanelOpen(open === true));
   ipcMain.handle('languages:toggle-panel', (event, anchor: LanguagePanelAnchor, keyboard: boolean) =>

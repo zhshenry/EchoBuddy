@@ -16,20 +16,24 @@ export function fitOverlay(bounds: Rectangle, area: Rectangle): Rectangle {
 }
 
 export function dockAfterDrag(bounds: Rectangle, display: { id: number; workArea: Rectangle },
-  previous?: DockPlacement): DockPlacement | undefined {
+  previous?: DockPlacement, compact = false): DockPlacement | undefined {
   const area = display.workArea;
   // The expanded window has a 12 px horizontal and 16 px vertical shadow gutter.
+  const horizontalGutter = compact ? 0 : 12;
+  const verticalGutter = compact ? 0 : 16;
   const distances: Record<DockSide, number> = {
-    left: Math.max(0, bounds.x + 12 - area.x),
-    right: Math.max(0, area.x + area.width - (bounds.x + bounds.width - 12)),
-    top: Math.max(0, bounds.y + 16 - area.y),
+    left: Math.max(0, bounds.x + horizontalGutter - area.x),
+    right: Math.max(0, area.x + area.width - (bounds.x + bounds.width - horizontalGutter)),
+    top: Math.max(0, bounds.y + verticalGutter - area.y),
   };
   const nearest = (Object.keys(distances) as DockSide[]).sort((a, b) => distances[a] - distances[b])[0];
-  const side = distances[nearest] <= 24 ? nearest
-    : previous?.displayId === display.id && distances[previous.side] <= 48 ? previous.side : undefined;
+  const previousSide = previous?.displayId === display.id ? previous.side : undefined;
+  const side = compact && previousSide && distances[previousSide] <= 24 ? previousSide
+    : distances[nearest] <= 24 ? nearest
+    : previousSide && distances[previousSide] <= 48 ? previousSide : undefined;
   if (!side) return undefined;
   const offset = side === 'top' ? (bounds.x + bounds.width / 2 - area.x) / area.width
-    : (bounds.y + overlayMinHeight / 2 - area.y) / area.height;
+    : (bounds.y + (compact ? bounds.height : overlayMinHeight) / 2 - area.y) / area.height;
   return { side, displayId: display.id, offset: Math.max(0, Math.min(1, offset)) };
 }
 

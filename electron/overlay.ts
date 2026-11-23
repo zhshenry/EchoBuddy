@@ -14,6 +14,7 @@ export function createOverlay(
   let dock = dockOnEdge ? saved.dock : undefined;
   let compact = !!dock;
   let dragging = false;
+  let compactDrag: { update: () => void; timer: NodeJS.Timeout } | undefined;
   let collapseArmed = false;
   let outsideSince: number | undefined;
   let panelOpen = false;
@@ -82,6 +83,7 @@ export function createOverlay(
   }
 
   function setCompact(next: boolean) {
+    if (!next) stopCompactDrag();
     if (!dock || next === compact) return;
     compact = next;
     collapseArmed = false;
@@ -145,31 +147,65 @@ export function createOverlay(
   }
   window.on('show', syncPointerTracking);
   window.on('hide', () => {
+    stopCompactDrag();
     if (motion) finishDockMotion(motion);
     clearTimeout(pointerTimer);
   });
   window.webContents.on('did-start-loading', () => {
+    stopCompactDrag();
     if (motion) finishDockMotion(motion);
     panelOpen = false;
     trackPointer(false);
   });
+
+  function settleDrag() {
+    const frame = window.getBounds(), expanded = layout?.expanded;
+    const region = compact ? layout?.compact : expanded;
+    const bounds = region ? { ...region, x: frame.x + region.x, y: frame.y + region.y } : frame;
+    anchor = { x: frame.x + (expanded?.x ?? 0), y: frame.y + (expanded?.y ?? 0) };
+    dock = dockOnEdge ? dockAfterDrag(bounds, screen.getDisplayMatching(bounds), dock, compact) : undefined;
+    compact = compact && !!dock;
+    collapseArmed = !!dock && !compact;
+    outsideSince = undefined;
+    place();
+    remember(anchor, dock);
+    publishDock();
+    syncPointerTracking();
+  }
+
+  function stopCompactDrag(sampleDrop = false) {
+    if (!compactDrag) return;
+    clearInterval(compactDrag.timer);
+    if (sampleDrop) compactDrag.update();
+    compactDrag = undefined;
+    settleDrag();
+  }
+
+  function dragCompact(point: OverlayPointer) {
+    if (!point) { stopCompactDrag(true); return; }
+    if (!compact || motion || compactDrag || !Number.isFinite(point.x) || !Number.isFinite(point.y)) return;
+    const content = window.getContentBounds(), zoom = window.webContents.getZoomFactor();
+    const [x, y] = window.getPosition();
+    const grab = { x: content.x - x + point.x * zoom, y: content.y - y + point.y * zoom };
+    let lastX = x, lastY = y;
+    const update = () => {
+      const cursor = screen.getCursorScreenPoint();
+      const nextX = Math.round(cursor.x - grab.x), nextY = Math.round(cursor.y - grab.y);
+      if (lastX === nextX && lastY === nextY) return;
+      window.setPosition(nextX, nextY);
+      lastX = nextX;
+      lastY = nextY;
+    };
+    compactDrag = { update, timer: setInterval(update, 16) };
+    update();
+  }
 
   place();
   window.on('will-move', () => { dragging = true; outsideSince = undefined; });
   window.on('moved', () => {
     if (!dragging) return;
     dragging = false;
-    const frame = window.getBounds(), expanded = layout?.expanded;
-    const bounds = expanded ? { ...expanded, x: frame.x + expanded.x, y: frame.y + expanded.y } : frame;
-    anchor = { x: bounds.x, y: bounds.y };
-    dock = dockOnEdge ? dockAfterDrag(bounds, screen.getDisplayMatching(bounds), dock) : undefined;
-    compact = false;
-    collapseArmed = !!dock;
-    outsideSince = undefined;
-    place();
-    remember(anchor, dock);
-    publishDock();
-    syncPointerTracking();
+    settleDrag();
   });
   function displayChanged() {
     place();
@@ -181,11 +217,12 @@ export function createOverlay(
   window.on('closed', () => {
     clearTimeout(pointerTimer);
     clearTimeout(motionTimer);
+    clearInterval(compactDrag?.timer);
     screen.off('display-removed', displayChanged);
     screen.off('display-metrics-changed', displayChanged);
   });
   return {
-    window, trackPointer, snapshot, finishDockMotion,
+    window, trackPointer, snapshot, finishDockMotion, dragCompact,
     expand() {
       collapseArmed = false;
       outsideSince = undefined;
@@ -202,6 +239,8 @@ export function createOverlay(
     setDockOnEdge(enabled: boolean) {
       dockOnEdge = enabled;
       if (enabled || !dock) return;
+      stopCompactDrag();
+      if (!dock) return;
       const bounds = dockBounds(dockDisplay().workArea, dock, height, false);
       anchor = { x: bounds.x, y: bounds.y };
       dock = undefined;

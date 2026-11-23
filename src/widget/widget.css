@@ -98,6 +98,7 @@ button:focus-visible { outline: 2px solid var(--acc-deep); outline-offset: 2px; 
   padding: 5px 3px; gap: 3px; background: var(--dock-fill); color: var(--ink);
   border: 1px solid var(--line); overflow: hidden;
 }
+.overlay:not(.dock-motion) .edge-dock { -webkit-app-region: drag; cursor: move; }
 .edge-dock[data-side="left"] { border-left: 0; border-radius: 0 var(--dock-radius) var(--dock-radius) 0; }
 .edge-dock[data-side="right"] { border-right: 0; border-radius: var(--dock-radius) 0 0 var(--dock-radius); }
 .edge-dock[data-side="top"] {
@@ -112,6 +113,8 @@ button:focus-visible { outline: 2px solid var(--acc-deep); outline-offset: 2px; 
 .dock-avatar .bot-avatar { width: 30px; height: 30px; pointer-events: none; }
 .dock-avatar .bot-avatar::after { content: none; }
 .edge-dock > .power { position: static; width: 32px; height: 32px; }
+.edge-dock button { touch-action: none; }
+.edge-dock > .power:disabled { pointer-events: none; }
 .dock-status {
   display: inline-flex; justify-content: center; align-items: center; gap: 3px;
   font-size: var(--caption-size); font-weight: var(--semibold); line-height: var(--compact-line-height); color: var(--muted);

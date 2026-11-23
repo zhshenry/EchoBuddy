@@ -90,6 +90,8 @@ class WaveFile {
       && SetFilePointerEx(file_, end, nullptr, FILE_BEGIN) && FlushFileBuffers(file_);
   }
 
+  UINT32 frameCount() const { return frames_; }
+
  private:
   bool write(const void* data, DWORD size) {
     DWORD written{};
@@ -122,7 +124,7 @@ class Track {
     return SUCCEEDED(device_->GetState(&state)) && (state & DEVICE_STATE_ACTIVE);
   }
 
-  bool drain(std::uint64_t origin, UINT32 limit) {
+  bool drain(std::uint64_t origin) {
     UINT32 next{};
     HRESULT hr = capture_->GetNextPacketSize(&next);
     while (SUCCEEDED(hr) && next) {
@@ -133,10 +135,12 @@ class Track {
       hr = capture_->GetBuffer(&bytes, &count, &flags, nullptr, &timestamp);
       if (hr == AUDCLNT_S_BUFFER_EMPTY) return true;
       if (FAILED(hr)) break;
-      const auto offset = !timestamp || (flags & AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR)
-        ? (limit > count ? limit - count : 0) : std::min(framesBetween(origin, timestamp), limit);
-      const auto available = std::min(count, limit - offset);
-      const bool saved = file.append(offset, (flags & AUDCLNT_BUFFERFLAGS_SILENT) ? nullptr : bytes, available);
+      const auto receivedAt = clockTicks();
+      const auto elapsed = framesBetween(origin, receivedAt);
+      const auto offset = !timestamp || timestamp > receivedAt || (flags & AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR)
+        ? std::max(file.frameCount(), elapsed > count ? elapsed - count : 0) : framesBetween(origin, timestamp);
+      // Packets can arrive after the polling loop takes its time sample.
+      const bool saved = file.append(offset, (flags & AUDCLNT_BUFFERFLAGS_SILENT) ? nullptr : bytes, count);
       hr = capture_->ReleaseBuffer(count);
       if (!saved) return false;
       if (FAILED(hr)) break;
@@ -201,7 +205,7 @@ int record(const std::wstring& directory, bool microphone, bool system) {
     bool anyActive = false;
     for (auto* track : tracks) {
       if (!track || !track->active) continue;
-      if (!track->drain(origin, elapsed)) { std::puts("error disk"); return 1; }
+      if (!track->drain(origin)) { std::puts("error disk"); return 1; }
       if (checkDevice && !track->deviceActive()) track->disconnect();
       anyActive |= track->active;
     }
@@ -210,7 +214,10 @@ int record(const std::wstring& directory, bool microphone, bool system) {
     const bool checkpoint = finish || now >= nextCheckpoint;
     if (checkDevice || checkpoint) {
       // Leave time for queued device packets when a source has gone quiet.
-      const UINT32 end = finish ? elapsed : (elapsed > rate / 2 ? elapsed - rate / 2 : 0);
+      UINT32 end = finish ? elapsed : (elapsed > rate / 2 ? elapsed - rate / 2 : 0);
+      if (finish) {
+        for (const auto* track : tracks) if (track) end = std::max(end, track->file.frameCount());
+      }
       for (auto* track : tracks) {
         if (track && (!track->file.pad(end) || (checkpoint && !track->file.checkpoint()))) { std::puts("error disk"); return 1; }
       }

@@ -39,6 +39,25 @@ test('drop distance supports detaching and does not activate the bottom edge', (
   assert.equal(dockAfterDrag({ ...nearLeft, x: -935, y: 812 }, screen), undefined);
 });
 
+test('a compact top bar stays on the top edge while sliding to a corner and can be pulled off', () => {
+  const previous = { side: 'top', displayId: screen.id, offset: .5 } as const;
+  const drop = { x: -1440, y: 24, width: 144, height: 44 };
+  const dock = dockAfterDrag(drop, screen, previous, true);
+  assert.ok(dock);
+  assert.equal(dock.side, 'top');
+  assert.deepEqual(dockBounds(screen.workArea, dock, 88, true), drop);
+  assert.equal(dockAfterDrag({ ...drop, x: -1080, y: 73 }, screen, previous, true), undefined);
+});
+
+test('a compact side bar keeps its dropped vertical position without the expanded gutter', () => {
+  const previous = { side: 'right', displayId: screen.id, offset: .5 } as const;
+  const drop = { x: -44, y: 380, width: 44, height: 110 };
+  const dock = dockAfterDrag(drop, screen, previous, true);
+  assert.ok(dock);
+  assert.equal(dock.side, 'right');
+  assert.deepEqual(dockBounds(screen.workArea, dock, 88, true), drop);
+});
+
 test('both dock poses preserve their screen positions inside a single native frame', () => {
   const { workArea } = screen;
   for (const side of ['left', 'right', 'top'] as const) {

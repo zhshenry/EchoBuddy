@@ -25,6 +25,7 @@ const bridge: DesktopBridge = {
   openMeetingFolder: id => ipcRenderer.invoke('meeting:folder', id),
   resize: height => { void ipcRenderer.invoke('overlay:resize', height).catch(() => {}); },
   expandOverlay: () => ipcRenderer.invoke('overlay:expand'),
+  dragCompact: point => { void ipcRenderer.invoke('overlay:compact-drag', point).catch(() => {}); },
   finishDockMotion: id => { void ipcRenderer.invoke('overlay:dock-motion-finished', id).catch(() => {}); },
   setOverlayPanelOpen: open => ipcRenderer.invoke('overlay:panel-open', open),
   toggleLanguagePanel: (anchor, keyboard) => ipcRenderer.invoke('languages:toggle-panel', anchor, keyboard),
