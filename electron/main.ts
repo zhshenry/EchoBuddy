@@ -17,6 +17,7 @@ import { MeetingTranscription } from './meeting/transcription';
 import { createOverlay } from './overlay';
 import { fitOverlay } from './overlay-position';
 import { loadPreferences, savePreferences, validShortcut } from './preferences';
+import { watchSettingsDragRefresh } from './settings-drag-refresh';
 import { SpeechEngine } from './speech/engine';
 import { SpeakerSession } from './speech/speaker-session';
 import { AppUpdates, releasesUrl } from './updater';
@@ -170,6 +171,17 @@ async function start() {
       webPreferences: { preload, sandbox: true, contextIsolation: true, nodeIntegration: false, spellcheck: false },
     });
     restrictNavigation(target);
+    if (process.platform === 'win32') {
+      watchSettingsDragRefresh({
+        isDestroyed: () => target.isDestroyed(),
+        isMinimized: () => target.isMinimized(),
+        onMinimize: listener => { target.on('minimize', listener); },
+        onRestore: listener => { target.on('restore', listener); },
+        onShow: listener => { target.on('show', listener); },
+      }, () => {
+        if (!target.isDestroyed()) target.webContents.send('settings:refresh-drag');
+      });
+    }
     target.once('ready-to-show', () => target.show());
     target.on('blur', () => {
       if (quitting || !editing) return;

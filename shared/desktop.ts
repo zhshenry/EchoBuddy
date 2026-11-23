@@ -116,6 +116,7 @@ export interface DesktopBridge {
   onPreferences(handle: (state: Preferences) => void): () => void;
   onLanguagePanel(handle: (open: boolean) => void): () => void;
   onSettingsPage(handle: (destination: SettingsDestination) => void): () => void;
+  onSettingsDragRefresh(handle: () => void): () => void;
   onUpdate(handle: (state: UpdateStatus) => void): () => void;
   onOverlayDock(handle: (state: OverlayDock) => void): () => void;
   onOverlayPointer(handle: (point: OverlayPointer) => void): () => void;
