@@ -176,18 +176,20 @@ test('an inconsistent streaming final is retained in full for review', async () 
   assert.equal(controller.snapshot().pending, '发给小黄确认。');
 });
 
-test('a partial streaming write keeps the full transcript and pauses further insertion', async () => {
-  const { controller, writes, next } = setup();
-  controller.toggle(undefined, 'streaming');
-  const id = controller.snapshot().sessionId!;
-  controller.recording(id);
-  await controller.writeProgress(id, '一段。');
-  next('partial');
-  await controller.writeProgress(id, '一段。二段。');
-  await controller.complete(id, '一段。二段。三段。');
-  assert.deepEqual(writes, [['一段。', true], ['二段。', true]]);
-  assert.equal(controller.snapshot().pending, '一段。二段。三段。');
-  assert.match(controller.snapshot().message, /可能已写入部分内容/);
+test('an uncertain streaming write keeps the full transcript and pauses further insertion', async () => {
+  for (const result of ['partial', 'paste-unconfirmed'] as const) {
+    const { controller, writes, next } = setup();
+    controller.toggle(undefined, 'streaming');
+    const id = controller.snapshot().sessionId!;
+    controller.recording(id);
+    await controller.writeProgress(id, '一段。');
+    next(result);
+    await controller.writeProgress(id, '一段。二段。');
+    await controller.complete(id, '一段。二段。三段。');
+    assert.deepEqual(writes, [['一段。', true], ['二段。', true]]);
+    assert.equal(controller.snapshot().pending, '一段。二段。三段。');
+    assert.match(controller.snapshot().message, /可能已写入部分内容/);
+  }
 });
 
 test('moved target leaves a recoverable transcript and blocks update installation', async () => {

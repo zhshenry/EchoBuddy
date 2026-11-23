@@ -1,30 +1,40 @@
 import type { MeetingLine, MeetingSpeaker } from '../../shared/meeting-contracts';
-import { cosine, normalizeVoiceprint, voiceprintThreshold } from '../speech/speaker-timeline';
+import { VOICEPRINT_MIN_VOICE_SECONDS } from '../../shared/speaker-contracts';
+import { SPEECH_SAMPLE_RATE } from '../../shared/speech-contracts';
+import { cosine, normalizeVoiceprint, voiceprintThreshold, type VoiceprintVector } from '../speech/speaker-timeline';
+import type { MeetingChunk } from '../speech/worker-contract';
+
+type MeetingVoice = MeetingChunk['voices'][number];
+const minimumProfileSamples = VOICEPRINT_MIN_VOICE_SECONDS * SPEECH_SAMPLE_RATE;
+const matchMargin = .08;
 
 export class MeetingSpeakers {
   private readonly voices = new Map<number, number[]>();
   private next = 0;
 
-  constructor(private readonly profile: number[] | null) {}
+  constructor(private readonly profiles: readonly VoiceprintVector[]) {}
 
   restore(speaker: number, vector: number[] | null): void {
     this.next = Math.max(this.next, speaker + 1);
     if (vector) this.voices.set(speaker, vector);
   }
 
-  assign(vector: number[], allowSelf: boolean): MeetingSpeaker {
-    const similarity = this.profile ? cosine(this.profile, vector) : -1;
-    const candidates = [...this.voices].map(([id, voice]) => ({ id, score: cosine(voice, vector) }))
+  assign(voice: MeetingVoice, peers: readonly MeetingVoice[] = []): MeetingSpeaker {
+    const { vector, samples } = voice;
+    const candidates = [...this.profiles, ...Array.from(this.voices, ([id, vector]) => ({ id, vector }))]
+      .map(candidate => ({ ...candidate, score: cosine(candidate.vector, vector) }))
       .sort((left, right) => right.score - left.score);
     const best = candidates[0], runnerUp = candidates[1];
-    if (allowSelf && similarity >= voiceprintThreshold && similarity - (best?.score ?? -1) >= .08) return 'self';
-    if (best && best.score >= voiceprintThreshold &&
-        best.score - Math.max(runnerUp?.score ?? -1, similarity) >= .08) {
-      const previous = this.voices.get(best.id)!;
-      this.voices.set(best.id, normalizeVoiceprint(previous.map((value, index) => value * .8 + vector[index] * .2)) ?? previous);
-      return best.id;
+    if (best && best.score >= voiceprintThreshold && best.score - (runnerUp?.score ?? -1) >= matchMargin) {
+      if (typeof best.id === 'number') {
+        const previous = best.vector;
+        this.voices.set(best.id, normalizeVoiceprint(previous.map((value, index) => value * .8 + vector[index] * .2)) ?? previous);
+        return best.id;
+      }
+      if (samples >= minimumProfileSamples && peers.every(other => other === voice || other.samples < minimumProfileSamples ||
+        best.score - cosine(best.vector, other.vector) >= matchMargin)) return best.id;
     }
-    if (Math.max(similarity, best?.score ?? -1) >= .58) return 'unknown';
+    if ((best?.score ?? -1) >= .58) return 'unknown';
     const id = this.next++;
     this.voices.set(id, vector);
     return id;

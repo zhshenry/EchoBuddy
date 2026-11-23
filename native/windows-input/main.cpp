@@ -4,6 +4,7 @@
 #include <oleacc.h>
 #include <wrl/client.h>
 
+#include <algorithm>
 #include <cstdlib>
 #include <cstring>
 #include <cwchar>
@@ -123,15 +124,20 @@ static ComPtr<IUIAutomationTextRange> selectionOf(IUIAutomationElement* element,
 
 enum class Editability { unknown, readOnly, writable };
 
+static Editability textRangeEditability(IUIAutomationTextRange* range) {
+    if (!range) return Editability::unknown;
+    VARIANT readOnly;
+    VariantInit(&readOnly);
+    const bool known = SUCCEEDED(range->GetAttributeValue(UIA_IsReadOnlyAttributeId, &readOnly)) && readOnly.vt == VT_BOOL;
+    const bool writable = known && readOnly.boolVal == VARIANT_FALSE;
+    VariantClear(&readOnly);
+    if (!known) return Editability::unknown;
+    return writable ? Editability::writable : Editability::readOnly;
+}
+
 static Editability editability(IUIAutomationElement* element, IUIAutomationTextRange* range, bool chat, bool manual = false) {
-    if (range) {
-        VARIANT readOnly;
-        VariantInit(&readOnly);
-        bool known = SUCCEEDED(range->GetAttributeValue(UIA_IsReadOnlyAttributeId, &readOnly)) && readOnly.vt == VT_BOOL;
-        bool editable = known && readOnly.boolVal == VARIANT_FALSE;
-        VariantClear(&readOnly);
-        if (known) return editable ? Editability::writable : Editability::readOnly;
-    }
+    const auto rangeEditability = textRangeEditability(range);
+    if (rangeEditability != Editability::unknown) return rangeEditability;
     ComPtr<IUIAutomationValuePattern> value;
     BOOL readOnly = TRUE;
     CONTROLTYPEID kind = 0;
@@ -222,6 +228,14 @@ static bool captureGuardedEditor(IUIAutomation* automation, Target& target, cons
         SUCCEEDED(value->get_CurrentIsReadOnly(&readOnly));
     if (hasValue && readOnly) return false;
     if (captureWindowCaret(target, info) || kind == UIA_EditControlTypeId || hasValue) return true;
+
+    // Some editors expose document editability without exposing a caret or selection.
+    if (kind == UIA_DocumentControlTypeId) {
+        ComPtr<IUIAutomationTextPattern> text;
+        ComPtr<IUIAutomationTextRange> document;
+        return SUCCEEDED(element->GetCurrentPatternAs(UIA_TextPatternId, IID_PPV_ARGS(&text))) && text &&
+            SUCCEEDED(text->get_DocumentRange(&document)) && textRangeEditability(document.Get()) == Editability::writable;
+    }
 
     // A custom keyboard target must be distinguishable from the hosting window.
     BOOL focusable = FALSE, same = TRUE;
@@ -414,22 +428,12 @@ static void freeClipboardData(UINT format, HANDLE data) {
 
 class ClipboardPaste {
 public:
-    ClipboardPaste(const Target& target, const std::wstring& text, const ChatTargetWatch* watch)
-        : target_(target), watch_(watch) {
+    explicit ClipboardPaste(const std::wstring& text) {
         text_ = clipboardMemory(text.c_str(), (text.size() + 1) * sizeof(wchar_t));
         const DWORD marker = 1;
         exclude_ = clipboardMemory(&marker, sizeof(marker));
-        const HINSTANCE instance = GetModuleHandleW(nullptr);
-        static const ATOM windowClass = [] {
-            WNDCLASSW definition{};
-            definition.lpfnWndProc = renderFormat;
-            definition.hInstance = GetModuleHandleW(nullptr);
-            definition.lpszClassName = L"EchoBuddyClipboardPaste";
-            return RegisterClassW(&definition);
-        }();
-        if (windowClass) owner_ = CreateWindowExW(0, MAKEINTATOM(windowClass), L"", 0, 0, 0, 0, 0,
-            HWND_MESSAGE, nullptr, instance, nullptr);
-        if (owner_) SetWindowLongPtrW(owner_, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(this));
+        owner_ = CreateWindowExW(0, L"STATIC", L"", 0, 0, 0, 0, 0,
+            HWND_MESSAGE, nullptr, GetModuleHandleW(nullptr), nullptr);
     }
     ClipboardPaste(const ClipboardPaste&) = delete;
     ClipboardPaste& operator=(const ClipboardPaste&) = delete;
@@ -457,7 +461,7 @@ public:
         return saved;
     }
 
-    bool publish(bool immediate) {
+    bool publish() {
         const UINT excludeFormat = RegisterClipboardFormatW(L"ExcludeClipboardContentFromMonitorProcessing");
         if (!excludeFormat || !open()) return false;
         bool ready = false;
@@ -465,13 +469,8 @@ public:
             restore_ = true;
             if (SetClipboardData(excludeFormat, exclude_)) {
                 exclude_ = nullptr;
-                if (immediate) {
-                    ready = SetClipboardData(CF_UNICODETEXT, text_) != nullptr;
-                    if (ready) text_ = nullptr;
-                } else {
-                    SetClipboardData(CF_UNICODETEXT, nullptr);
-                    ready = IsClipboardFormatAvailable(CF_UNICODETEXT) != FALSE;
-                }
+                ready = SetClipboardData(CF_UNICODETEXT, text_) != nullptr;
+                if (ready) text_ = nullptr;
             }
         }
         CloseClipboard();
@@ -480,18 +479,6 @@ public:
 
     bool ownsClipboard() const { return GetClipboardOwner() == owner_; }
     void keepTranscript() { restore_ = false; }
-
-    bool waitForRead() const {
-        const ULONGLONG deadline = GetTickCount64() + 600;
-        while (text_ && ownsClipboard()) {
-            const ULONGLONG now = GetTickCount64();
-            if (now >= deadline ||
-                MsgWaitForMultipleObjects(0, nullptr, FALSE, static_cast<DWORD>(deadline - now), QS_SENDMESSAGE) != WAIT_OBJECT_0) break;
-            MSG message{};
-            PeekMessageW(&message, nullptr, 0, 0, PM_NOREMOVE);
-        }
-        return !text_;
-    }
 
 private:
     bool open() const {
@@ -519,23 +506,6 @@ private:
         }
     }
 
-    static LRESULT CALLBACK renderFormat(HWND window, UINT message, WPARAM format, LPARAM param) {
-        if (message == WM_RENDERFORMAT && format == CF_UNICODETEXT) {
-            const auto paste = reinterpret_cast<ClipboardPaste*>(GetWindowLongPtrW(window, GWLP_USERDATA));
-            DWORD reader = 0;
-            GetWindowThreadProcessId(GetOpenClipboardWindow(), &reader);
-            if (paste && paste->text_ && (!paste->watch_ || paste->watch_->unchanged()) &&
-                GetForegroundWindow() == paste->target_.foreground &&
-                (!reader || reader == paste->target_.process) && SetClipboardData(CF_UNICODETEXT, paste->text_)) {
-                paste->text_ = nullptr;
-            }
-            return 0;
-        }
-        return DefWindowProcW(window, message, format, param);
-    }
-
-    const Target& target_;
-    const ChatTargetWatch* watch_;
     HWND owner_ = nullptr;
     HGLOBAL text_ = nullptr;
     HGLOBAL exclude_ = nullptr;
@@ -543,58 +513,6 @@ private:
     bool restore_ = false;
     std::vector<std::pair<UINT, HANDLE>> previous_;
 };
-
-struct PasteCheck;
-static Target advanceTarget(IUIAutomation* automation, DWORD appPid, const Target& before,
-    const std::wstring& text, const ChatTargetWatch* watch, const PasteCheck* paste);
-
-static const char* pasteText(IUIAutomation* automation, DWORD appPid, const Target* saved, const Target& current,
-    const std::wstring& text, ULONGLONG deadline, const ChatTargetWatch& watch, bool streaming, const PasteCheck* check) {
-    const bool guarded = saved && saved->paste == PasteMode::guarded;
-    const bool immediate = !saved || guarded;
-    const ChatTargetWatch* guard = saved && (guarded || streaming || !saved->hasCaret()) ? &watch : nullptr;
-    ChatTargetWatch manualWatch;
-    if (current.paste == PasteMode::unverified) {
-        manualWatch.start(current.foreground, appPid, {});
-        if (!manualWatch.watching() || !manualWatch.unchanged()) return "moved";
-        guard = &manualWatch;
-    }
-    const auto targetUnchanged = [&] { return guarded ? watch.editorUnchanged() : !guard || guard->unchanged(); };
-    ClipboardPaste clipboard(current, text, guard);
-    if (!clipboard.snapshot()) return "unavailable";
-    const Target confirmed = capture(automation, appPid, writeCaptureMode(saved));
-    if (!confirmed.usesClipboard() || !sameEditor(automation, current, confirmed) ||
-        (saved && !sameTarget(automation, *saved, confirmed, watch)) ||
-        (!saved && current.hasCaret() && !sameTarget(automation, current, confirmed, watch)) ||
-        !targetUnchanged() || !stillFocused(confirmed)) return "moved";
-    // Leave time for the paste and clipboard restoration before the helper can time out.
-    if (GetTickCount64() > deadline || !clipboard.publish(immediate)) return "unavailable";
-    const Target& position = guarded && saved->caret ? *saved : confirmed;
-    if (!stillFocused(position) || !targetUnchanged()) return "moved";
-    if (!clipboard.ownsClipboard()) return "unavailable";
-    INPUT keys[4]{};
-    for (auto& key : keys) {
-        key.type = INPUT_KEYBOARD;
-        key.ki.dwExtraInfo = dictationInputTag;
-    }
-    keys[0].ki.wVk = keys[3].ki.wVk = VK_CONTROL;
-    keys[1].ki.wVk = keys[2].ki.wVk = 'V';
-    keys[2].ki.dwFlags = keys[3].ki.dwFlags = KEYEVENTF_KEYUP;
-    const UINT sent = SendInput(ARRAYSIZE(keys), keys, sizeof(INPUT));
-    if (sent && sent < ARRAYSIZE(keys)) {
-        const UINT release = sent == 2 ? 2 : 3;
-        SendInput(ARRAYSIZE(keys) - release, keys + release, sizeof(INPUT));
-    }
-    if (sent < 2) return "unavailable";
-    if (!immediate) return clipboard.waitForRead() && sent == ARRAYSIZE(keys) ? "written" : "partial";
-    if (sent == ARRAYSIZE(keys) && check && advanceTarget(automation, appPid, current, text, guard, check).foreground)
-        return "written";
-    // A paste can read the clipboard more than once or well after SendInput returns.
-    // Keep the actual transcript available when the edit cannot be verified.
-    if (!clipboard.ownsClipboard()) return "partial";
-    clipboard.keepTranscript();
-    return "paste-unconfirmed";
-}
 
 static int hexDigit(char c) {
     if (c >= '0' && c <= '9') return c - '0';
@@ -618,25 +536,53 @@ static std::wstring decodeText(const std::string& hex) {
 
 struct PasteCheck {
     ComPtr<IUIAutomationTextRange> start;
-    std::wstring expected;
+    std::optional<std::wstring> expected;
+    std::optional<std::wstring> previousValue;
 };
 
-static std::optional<PasteCheck> preparePasteCheck(IUIAutomationTextRange* selection, const std::wstring& text) {
+static std::optional<std::wstring> editorValue(IUIAutomationElement* element) {
+    ComPtr<IUIAutomationValuePattern> pattern;
+    if (!element || FAILED(element->GetCurrentPatternAs(UIA_ValuePatternId, IID_PPV_ARGS(&pattern))) || !pattern)
+        return std::nullopt;
+    BSTR value = nullptr;
+    std::optional<std::wstring> result;
+    if (SUCCEEDED(pattern->get_CurrentValue(&value))) result.emplace(value ? value : L"", SysStringLen(value));
+    SysFreeString(value);
+    return result;
+}
+
+static PasteCheck preparePasteCheck(const Target& target, const std::wstring& text) {
+    PasteCheck check;
+    check.previousValue = editorValue(target.element.Get());
+    auto* selection = target.selection.Get();
     ComPtr<IUIAutomationTextRange> start;
     int moved = 0;
     // Some providers advance a saved range during a paste. Anchor it before the affected text.
     if (!selection || FAILED(selection->Clone(&start)) || !start ||
         FAILED(start->MoveEndpointByRange(TextPatternRangeEndpoint_End, start.Get(), TextPatternRangeEndpoint_Start)) ||
-        FAILED(start->MoveEndpointByUnit(TextPatternRangeEndpoint_Start, TextUnit_Character, -1, &moved))) return std::nullopt;
-    if (!moved) return PasteCheck{nullptr, text};
+        FAILED(start->MoveEndpointByUnit(TextPatternRangeEndpoint_Start, TextUnit_Character, -1, &moved))) return check;
+    if (!moved) {
+        check.expected = text;
+        return check;
+    }
     BSTR prefix = nullptr;
     const bool readable = SUCCEEDED(start->GetText(-1, &prefix)) && prefix;
-    std::wstring expected;
-    if (readable) expected.assign(prefix, SysStringLen(prefix));
+    if (readable) {
+        check.start = std::move(start);
+        check.expected = std::wstring(prefix, SysStringLen(prefix)) + text;
+    }
     SysFreeString(prefix);
-    if (!readable) return std::nullopt;
-    expected += text;
-    return PasteCheck{std::move(start), std::move(expected)};
+    return check;
+}
+
+static bool valueReflectsPaste(const std::wstring& before, const std::wstring& after, const std::wstring& text) {
+    if (before == after || after.size() < text.size() || after.size() - text.size() > before.size()) return false;
+    // A paste can replace a selection. Check that the text around the pasted span is unchanged.
+    const size_t prefix = std::mismatch(before.begin(), before.end(), after.begin(), after.end()).first - before.begin();
+    const size_t suffix = std::mismatch(before.rbegin(), before.rend(), after.rbegin(), after.rend()).first - before.rbegin();
+    const size_t outsidePaste = after.size() - text.size();
+    const size_t first = outsidePaste > suffix ? outsidePaste - suffix : 0;
+    return after.find(text, first) <= prefix;
 }
 
 static bool caretAfterText(const Target& before, const Target& after, const std::wstring& text, const PasteCheck* paste) {
@@ -656,7 +602,7 @@ static bool caretAfterText(const Target& before, const Target& after, const std:
     if (!inserted || FAILED(inserted->MoveEndpointByRange(TextPatternRangeEndpoint_End,
         after.selection.Get(), TextPatternRangeEndpoint_Start))) return false;
 
-    const auto& expected = paste ? paste->expected : text;
+    const auto& expected = paste ? *paste->expected : text;
     BSTR value = nullptr;
     const bool complete = SUCCEEDED(inserted->GetText(static_cast<int>(expected.size() + 1), &value)) && value &&
         SysStringLen(value) == expected.size() && std::wmemcmp(value, expected.data(), expected.size()) == 0;
@@ -665,24 +611,82 @@ static bool caretAfterText(const Target& before, const Target& after, const std:
 }
 
 static Target advanceTarget(IUIAutomation* automation, DWORD appPid, const Target& before,
-    const std::wstring& text, const ChatTargetWatch* watch, const PasteCheck* paste = nullptr) {
-    // An editor with an internal caret stays guarded by the original input watcher.
-    if (!before.hasCaret()) return watch && watch->unchanged() ? before : Target{};
-    const ULONGLONG deadline = GetTickCount64() + 250;
+    const std::wstring& text, const ChatTargetWatch* watch, const PasteCheck* paste = nullptr,
+    CaptureMode mode = CaptureMode::automatic) {
+    if (!before.hasCaret() && !paste) return {};
+    const ULONGLONG deadline = GetTickCount64() + (paste ? 850 : 250);
     do {
         if (watch && !watch->unchanged()) return {};
-        const Target after = capture(automation, appPid);
+        const Target after = capture(automation, appPid, mode);
         if ((watch && !watch->unchanged()) || !sameEditor(automation, before, after)) return {};
         if (before.nativeEdit) {
             const size_t expected = before.selectionStart + text.size();
             if (after.nativeEdit && after.selectionStart == expected && after.selectionEnd == expected) return after;
-        } else if (before.selection) {
+        } else if (paste ? paste->expected.has_value() : before.selection.Get() != nullptr) {
             // UI Automation can report the caret after only the first keystrokes of a batch.
             if (caretAfterText(before, after, text, paste)) return after;
-        } else if (after.caret == before.caret && !EqualRect(&before.caretRect, &after.caretRect)) return after;
+        } else if (!paste && before.caret && after.caret == before.caret &&
+            !EqualRect(&before.caretRect, &after.caretRect)) return after;
+        if (paste && paste->previousValue) {
+            const auto value = editorValue(after.element.Get());
+            if (value && valueReflectsPaste(*paste->previousValue, *value, text)) return after;
+        }
         Sleep(10);
     } while (GetTickCount64() < deadline);
     return {};
+}
+
+static const char* pasteText(IUIAutomation* automation, DWORD appPid, const Target* saved, const Target& current,
+    const std::wstring& text, ULONGLONG deadline, const ChatTargetWatch& watch, Target* next) {
+    const bool guarded = saved && saved->paste == PasteMode::guarded;
+    const ChatTargetWatch* guard = saved && (guarded || next || !saved->hasCaret()) ? &watch : nullptr;
+    ChatTargetWatch manualWatch;
+    if (current.paste == PasteMode::unverified) {
+        manualWatch.start(current.foreground, appPid, {});
+        if (!manualWatch.watching() || !manualWatch.unchanged()) return "moved";
+        guard = &manualWatch;
+    }
+    const auto targetUnchanged = [&] { return guarded ? watch.editorUnchanged() : !guard || guard->unchanged(); };
+    const auto check = preparePasteCheck(current, text);
+    ClipboardPaste clipboard(text);
+    if (!clipboard.snapshot()) return "unavailable";
+    const auto mode = writeCaptureMode(saved);
+    const Target confirmed = capture(automation, appPid, mode);
+    if (!confirmed.usesClipboard() || !sameEditor(automation, current, confirmed) ||
+        (saved && !sameTarget(automation, *saved, confirmed, watch)) ||
+        (!saved && current.hasCaret() && !sameTarget(automation, current, confirmed, watch)) ||
+        !targetUnchanged() || !stillFocused(confirmed)) return "moved";
+    // Leave time for confirming the edit and restoring the clipboard before the helper can time out.
+    if (GetTickCount64() > deadline || !clipboard.publish()) return "unavailable";
+    const Target& position = guarded && saved->caret ? *saved : confirmed;
+    if (!stillFocused(position) || !targetUnchanged()) return "moved";
+    if (!clipboard.ownsClipboard()) return "unavailable";
+    INPUT keys[4]{};
+    for (auto& key : keys) {
+        key.type = INPUT_KEYBOARD;
+        key.ki.dwExtraInfo = dictationInputTag;
+    }
+    keys[0].ki.wVk = keys[3].ki.wVk = VK_CONTROL;
+    keys[1].ki.wVk = keys[2].ki.wVk = 'V';
+    keys[2].ki.dwFlags = keys[3].ki.dwFlags = KEYEVENTF_KEYUP;
+    const UINT sent = SendInput(ARRAYSIZE(keys), keys, sizeof(INPUT));
+    if (sent && sent < ARRAYSIZE(keys)) {
+        const UINT release = sent == 2 ? 2 : 3;
+        SendInput(ARRAYSIZE(keys) - release, keys + release, sizeof(INPUT));
+    }
+    if (sent < 2) return "unavailable";
+    if (sent == ARRAYSIZE(keys) && (current.nativeEdit || check.expected || check.previousValue)) {
+        auto after = advanceTarget(automation, appPid, current, text, guard, &check, mode);
+        if (after.foreground) {
+            if (next) *next = std::move(after);
+            return "written";
+        }
+    }
+    // A paste can read the clipboard more than once or well after SendInput returns.
+    // Keep the actual transcript available when the edit cannot be verified.
+    if (!clipboard.ownsClipboard()) return "partial";
+    clipboard.keepTranscript();
+    return "paste-unconfirmed";
 }
 
 static const char* insertText(IUIAutomation* automation, DWORD appPid, const Target* saved, const std::wstring& text,
@@ -708,15 +712,7 @@ static const char* insertText(IUIAutomation* automation, DWORD appPid, const Tar
     if ((saved ? !sameTarget(automation, *saved, current, watch) : !sameFocus(manualTarget, current)) ||
         (next && !watch.unchanged())) return "moved";
     if (current.usesClipboard()) {
-        const auto check = current.paste == PasteMode::editable || !saved ?
-            preparePasteCheck(current.selection.Get(), text) : std::nullopt;
-        const char* result = pasteText(automation, appPid, saved, current, text, pasteDeadline, watch, next != nullptr,
-            check ? &*check : nullptr);
-        if (saved && !guarded && std::strcmp(result, "written") == 0 && (next || check)) {
-            Target after = advanceTarget(automation, appPid, current, text, next ? &watch : nullptr, check ? &*check : nullptr);
-            if (!after.foreground) return "partial";
-            if (next) *next = std::move(after);
-        }
+        const char* result = pasteText(automation, appPid, saved, current, text, pasteDeadline, watch, next);
         // A failed clipboard preparation can fall back to typing at a verified selection.
         // Once Ctrl+V was sent, a late paste could otherwise duplicate the text.
         if (guarded || current.paste != PasteMode::editable || !current.selection || std::strcmp(result, "unavailable") != 0)
@@ -784,6 +780,8 @@ int main(int argc, char** argv) {
                 DictationShortcut shortcut;
                 arguments >> verb >> shortcut.key >> shortcut.modifiers;
                 saved = capture(automation.Get(), appPid, CaptureMode::guarded, &watch, shortcut);
+                if (streaming && saved.usesClipboard() && !saved.nativeEdit && !saved.selection &&
+                    saved.paste != PasteMode::guarded && !editorValue(saved.element.Get())) saved.paste = PasteMode::guarded;
                 const bool guarded = saved.paste == PasteMode::guarded;
                 const bool captured = saved.foreground && (saved.hasCaret() || saved.usesClipboard()) &&
                     (guarded ? watch.editorUnchanged() :

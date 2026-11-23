@@ -86,7 +86,7 @@ export class Dictation {
       const written = stream?.written ?? '';
       const aligned = text.startsWith(written);
       const remainder = aligned ? text.slice(written.length) : text;
-      if (stream?.failure === 'partial') {
+      if (stream?.failure === 'partial' || stream?.failure === 'paste-unconfirmed') {
         pending = text;
         message = this.writeMessage('partial', true);
       } else if (error) pending = remainder;

@@ -1,8 +1,9 @@
-import type { SpeakerLabel } from '../../shared/speaker-contracts';
+import type { SpeakerLabel, VoiceprintId } from '../../shared/speaker-contracts';
 import { SPEECH_SAMPLE_RATE as rate } from '../../shared/speech-contracts';
 
 export interface DiarizedSegment { start: number; end: number; speaker: number; }
 export interface SpeakerSpan { start: number; end: number; group: number | null; }
+export interface VoiceprintVector { id: VoiceprintId; vector: number[]; }
 
 export const minimumMeetingVoiceSamples = Math.round(1.2 * rate);
 export const voiceprintDimension = 192;

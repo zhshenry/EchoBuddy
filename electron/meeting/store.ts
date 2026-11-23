@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, open, readFile, readdir, rename, stat, type FileHandle } from 'node:fs/promises';
 import { join } from 'node:path';
-import { MEETING_MAX_FRAMES, MEETING_SOURCES, type MeetingLine, type MeetingRecord, type MeetingSource, type MeetingStatus } from '../../shared/meeting-contracts';
+import { MEETING_MAX_FRAMES, MEETING_SOURCES, type MeetingLine, type MeetingRecord, type MeetingSource, type MeetingSpeaker, type MeetingStatus } from '../../shared/meeting-contracts';
 import { pcmWaveHeader } from '../../shared/speech-audio';
+import { isVoiceprintId } from '../../shared/speaker-contracts';
 import { SPEECH_LANGUAGES, SPEECH_SAMPLE_RATE as rate, type SpeechLanguage } from '../../shared/speech-contracts';
 
 export const meetingId = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
@@ -82,6 +83,21 @@ export class MeetingStore {
       const record = this.get(id);
       if (!record) throw new Error('找不到这场会议。');
       return this.write({ ...record, ...changes });
+    });
+  }
+
+  renameSpeaker(id: string, speaker: MeetingSpeaker, name: string | null): Promise<MeetingRecord> {
+    return this.enqueueWrite(id, () => {
+      const record = this.get(id);
+      if (!record?.durationMs) throw new Error('找不到这场会议。');
+      if (!isVoiceprintId(speaker) && (typeof speaker !== 'number' || !Number.isSafeInteger(speaker) || speaker < 0)) {
+        throw new Error('说话人无效。');
+      }
+      if (name !== null && (typeof name !== 'string' || !name.trim())) throw new Error('说话人名称不能为空。');
+      const speakerNames = { ...record.speakerNames };
+      if (name === null) delete speakerNames[speaker];
+      else speakerNames[speaker] = name.trim();
+      return this.write({ ...record, speakerNames });
     });
   }
 

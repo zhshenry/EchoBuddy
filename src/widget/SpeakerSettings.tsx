@@ -1,8 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
+import { DotsThree, PencilSimple } from '@phosphor-icons/react';
 import { encodeSpeechWave } from '../../shared/speech-audio';
 import { SPEECH_SAMPLE_RATE } from '../../shared/speech-contracts';
-import { VOICEPRINT_CLIP_SECONDS, VOICEPRINT_SAMPLES } from '../../shared/speaker-contracts';
+import { VOICEPRINT_CLIP_SECONDS, VOICEPRINT_SAMPLES, type VoiceprintEnrollment, type VoiceprintId, type VoiceprintProfile } from '../../shared/speaker-contracts';
 import { Microphone } from '../audio/microphone';
+import { useInlineName } from './useInlineName';
 
 const prompts = [
   '我通常会在早上安排好今天要做的事情。',
@@ -27,10 +29,19 @@ function errorMessage(error: unknown): string {
 export function SpeakerSettings({ busy }: { busy: boolean }) {
   const desktop = window.echoBuddy;
   const recording = useRef<Recording | undefined>(undefined);
-  const [profile, setProfile] = useState<boolean>();
-  const [step, setStep] = useState<number | null>(null);
+  const addButton = useRef<HTMLButtonElement>(null);
+  const returnFocus = useRef<HTMLButtonElement | null>(null);
+  const deleteDialog = useRef<HTMLDialogElement>(null);
+  const [profiles, setProfiles] = useState<VoiceprintProfile[]>();
+  const [target, setTarget] = useState<VoiceprintEnrollment | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<VoiceprintId | null>(null);
+  const [deleteError, setDeleteError] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [step, setStep] = useState(0);
   const [phase, setPhase] = useState<'preparing' | 'recording' | 'processing' | null>(null);
   const [message, setMessage] = useState('');
+  const hasSelf = profiles?.some(profile => profile.id === 'self');
+  const locked = !!target || saving;
 
   const release = useCallback((keepSamples = false) => {
     const current = recording.current;
@@ -44,17 +55,32 @@ export function SpeakerSettings({ busy }: { busy: boolean }) {
 
   useEffect(() => {
     let mounted = true;
-    void desktop.hasVoiceprint().then(saved => { if (mounted) setProfile(saved); }).catch(() => {
-      if (mounted) setMessage('无法读取本机声纹，请重新打开设置。');
+    void desktop.voiceprints().then(saved => { if (mounted) setProfiles(saved); }).catch(() => {
+      if (mounted) setMessage('无法读取声纹库，请重新打开设置。');
     });
     return () => { mounted = false; release(); };
   }, [desktop, release]);
+
+  useLayoutEffect(() => { if (deleteTarget) deleteDialog.current?.showModal(); }, [deleteTarget]);
+  useLayoutEffect(() => {
+    if (target || deleteTarget || saving || !returnFocus.current) return;
+    const button = returnFocus.current.isConnected ? returnFocus.current : addButton.current;
+    returnFocus.current = null;
+    button?.focus({ preventScroll: true });
+  }, [target, deleteTarget, saving]);
+
+  function beginEnrollment(selection: VoiceprintEnrollment, origin: HTMLButtonElement) {
+    returnFocus.current = origin;
+    setTarget(selection);
+    setStep(0);
+    setMessage('');
+  }
 
   function cancel() {
     release();
     setPhase(null);
     setMessage('');
-    setStep(null);
+    setTarget(null);
   }
 
   async function stop(current: Recording) {
@@ -72,8 +98,8 @@ export function SpeakerSettings({ busy }: { busy: boolean }) {
       const result = await desktop.finishSpeakerCapture(current.id, wave);
       if (recording.current !== current || result.type !== 'enrollment') return;
       if (result.saved) {
-        setProfile(true);
-        setStep(null);
+        setProfiles(result.profiles);
+        setTarget(null);
         setMessage('验证通过，已保存本机声纹。');
       } else setStep(result.samples);
     } catch (error) {
@@ -90,7 +116,7 @@ export function SpeakerSettings({ busy }: { busy: boolean }) {
   }
 
   async function start() {
-    if (recording.current || busy) return;
+    if (!target || recording.current || busy || (target.id === 'new' && !target.name.trim())) return;
     const microphone = new Microphone(frame => {
       if (recording.current !== current) return;
       const chunk = frame.subarray(0, current.samples.length - current.length);
@@ -103,7 +129,7 @@ export function SpeakerSettings({ busy }: { busy: boolean }) {
     setMessage('');
     setPhase('preparing');
     try {
-      const id = await desktop.beginSpeakerCapture('enroll');
+      const id = await desktop.beginSpeakerCapture('enroll', target);
       if (recording.current !== current) return;
       if (!id) throw new Error('请先结束当前录音或设置操作，再开始录音。');
       current.id = id;
@@ -123,38 +149,137 @@ export function SpeakerSettings({ busy }: { busy: boolean }) {
   }
 
   async function deleteProfile() {
+    if (!deleteTarget || saving) return;
+    setSaving(true);
+    setDeleteError(false);
     try {
-      await desktop.deleteVoiceprint();
-      setProfile(false);
-      setMessage('已删除本机声纹。');
-    } catch (error) { setMessage(errorMessage(error)); }
+      setProfiles(await desktop.deleteVoiceprint(deleteTarget));
+      setMessage('声纹已删除。');
+      deleteDialog.current?.close();
+    } catch { setDeleteError(true); }
+    finally { setSaving(false); }
   }
 
-  const enrolling = step !== null;
+  async function renameProfile(id: VoiceprintId, name: string) {
+    await desktop.renameVoiceprint(id, name);
+    setProfiles(current => current?.map(profile => profile.id === id ? { ...profile, name } : profile));
+  }
+
   const verifying = step === VOICEPRINT_SAMPLES;
   const recordLabel = phase === 'preparing' ? '准备麦克风…' : phase === 'processing' ? '正在处理…' : phase === 'recording' ? '停止录音' : '开始录音';
   return <section className="settings-section" aria-labelledby="voiceprint-heading">
     <div className="row speaker-heading">
-      <h2 id="voiceprint-heading">我的声纹</h2>
-      {!enrolling && <div className="speaker-actions">
-        {profile && <button type="button" disabled={!!phase} onClick={() => void deleteProfile()}>删除声纹</button>}
-        <button type="button" className="speaker-record" disabled={profile === undefined || busy || !!phase}
-          onClick={() => { setStep(0); setMessage(''); }}>{profile ? '重新录入' : '录入我的声纹'}</button>
-      </div>}
+      <h2 id="voiceprint-heading">声纹库</h2>
+      <div className="speaker-actions">
+        {!hasSelf && <button type="button" disabled={!profiles || busy || locked}
+          onClick={event => beginEnrollment({ id: 'self' }, event.currentTarget)}>录入我的声纹</button>}
+        <button type="button" className="speaker-record" ref={addButton} disabled={!profiles || busy || locked}
+          onClick={event => beginEnrollment({ id: 'new', name: '' }, event.currentTarget)}>新增声纹</button>
+      </div>
     </div>
-    <p className="settings-note">{profile ? '已录入，声纹已加密保存在本机。' : '声纹用于识别你的声音，加密保存在本机。'}</p>
-    {enrolling && <div className="voiceprint-step">
+    {target && <div className="voiceprint-step">
       <h3 aria-live="polite">{verifying ? '验证声纹' : '录入样本 ' + (step + 1) + ' / ' + VOICEPRINT_SAMPLES}</h3>
+      {target.id === 'new' ? <div className="speaker-actions speaker-name-row">
+        <label htmlFor="voiceprint-enroll-name">显示名称</label>
+        <input id="voiceprint-enroll-name" type="text" autoFocus value={target.name} readOnly={!!phase || step > 0}
+          onChange={event => setTarget({ id: 'new', name: event.currentTarget.value })} />
+      </div> : <p className="voiceprint-target settings-note">录入对象 {profiles?.find(profile => profile.id === target.id)?.name || '我'}</p>}
       <p className="voiceprint-prompt">{prompts[step]}</p>
       <p className="settings-note">按平常说话的声音读完这句，至少说 3 秒。</p>
       <div className="speaker-actions">
         <button type="button" onClick={cancel}>退出录入</button>
-        <button type="button" className="speaker-record"
-          disabled={phase === 'preparing' || phase === 'processing' || (busy && !phase)}
+        <button type="button" className="speaker-record" autoFocus={target.id !== 'new'}
+          disabled={phase === 'preparing' || phase === 'processing' || (busy && !phase) || (target.id === 'new' && !target.name.trim())}
           onClick={() => phase === 'recording' && recording.current ? void stop(recording.current) : void start()}>{recordLabel}</button>
       </div>
       {phase === 'recording' && <p className="speaker-message" role="status">正在录音…</p>}
     </div>}
     {message && <p className="speaker-message" role="status">{message}</p>}
+    {!!profiles?.length && <ul className="voiceprint-list" aria-label="已录入的声纹">
+      {profiles.map(profile => <VoiceprintRow key={profile.id} profile={profile} busy={busy} locked={locked}
+        onRename={name => renameProfile(profile.id, name)}
+        onEnroll={origin => beginEnrollment({ id: profile.id }, origin)} onDelete={origin => {
+          returnFocus.current = origin;
+          setDeleteTarget(profile.id);
+          setDeleteError(false);
+        }} />)}
+    </ul>}
+    <p className="settings-note">声纹加密保存在本机，用于标注会议转写中的说话人。</p>
+    <dialog ref={deleteDialog} className="settings-confirm-dialog" role="alertdialog"
+      aria-labelledby="voiceprint-delete-title" aria-describedby="voiceprint-delete-description"
+      onClose={() => setDeleteTarget(null)} onCancel={event => { if (saving) event.preventDefault(); }}>
+      <h3 id="voiceprint-delete-title">删除声纹？</h3>
+      <p id="voiceprint-delete-description">将删除「{profiles?.find(profile => profile.id === deleteTarget)?.name || '我'}」的本机声纹。</p>
+      {deleteError && <p className="speaker-message" role="alert">无法删除声纹，请重试。</p>}
+      <div className="settings-confirm-actions">
+        <button type="button" disabled={saving} onClick={() => deleteDialog.current?.close()}>取消</button>
+        <button type="button" className="settings-confirm" disabled={saving} onClick={() => void deleteProfile()}>删除声纹</button>
+      </div>
+    </dialog>
   </section>;
+}
+
+function VoiceprintRow({ profile, busy, locked, onRename, onEnroll, onDelete }: {
+  profile: VoiceprintProfile;
+  busy: boolean;
+  locked: boolean;
+  onRename: (name: string) => Promise<void>;
+  onEnroll: (origin: HTMLButtonElement) => void;
+  onDelete: (origin: HTMLButtonElement) => void;
+}) {
+  const name = profile.name || '我';
+  const self = profile.id === 'self';
+  const editor = useInlineName(profile.name, onRename, self);
+  const errorId = useId();
+  const menuId = useId();
+  const moreButton = useRef<HTMLButtonElement>(null);
+  const menu = useRef<HTMLDivElement>(null);
+
+  function chooseAction(action: (origin: HTMLButtonElement) => void) {
+    const origin = moreButton.current;
+    if (!origin) return;
+    menu.current?.hidePopover();
+    action(origin);
+  }
+
+  return <li>
+    <div className="row voiceprint-person">
+      <div className="voiceprint-person-name">
+        {editor.editing ? <input {...editor.inputProps} className="inline-name-control voiceprint-name" aria-label="显示名称"
+          placeholder={self ? '我' : undefined} aria-describedby={editor.error ? errorId : undefined} />
+          : <button {...editor.buttonProps} className="inline-name-control voiceprint-name" aria-label={`给${name}改名`}
+            title={name + '，编辑声纹名称'} disabled={locked}>
+            <span>{name}</span><PencilSimple size={14} aria-hidden="true" />
+          </button>}
+        {self && <span className="voiceprint-role">本人</span>}
+      </div>
+      <div className="voiceprint-actions">
+        <button type="button" className="voiceprint-more" ref={moreButton} popoverTarget={menuId} aria-haspopup="menu"
+          aria-label={`${name}的更多操作`} title="更多操作" disabled={locked}>
+          <DotsThree size={18} weight="bold" aria-hidden="true" />
+        </button>
+        <div id={menuId} ref={menu} popover="auto" className="voiceprint-actions-menu" role="menu" aria-label={`${name}的声纹操作`}
+          onToggle={event => {
+            if (event.newState === 'open') event.currentTarget.querySelector<HTMLButtonElement>('button:enabled')?.focus({ preventScroll: true });
+          }} onKeyDown={event => {
+            if (event.key === 'Tab') {
+              event.currentTarget.hidePopover();
+              return;
+            }
+            if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+            event.preventDefault();
+            const items = event.currentTarget.querySelectorAll<HTMLButtonElement>('button:enabled');
+            const first = items[0], last = items[items.length - 1];
+            const next = event.key === 'Home' ? first : event.key === 'End' || document.activeElement === first ? last : first;
+            next?.focus({ preventScroll: true });
+          }}>
+          <button type="button" role="menuitem" tabIndex={-1} aria-label={`重新录入${name}的声纹`} disabled={busy || locked}
+            onClick={() => chooseAction(onEnroll)}>重新录入</button>
+          <button type="button" role="menuitem" tabIndex={-1} aria-label={`删除${name}的声纹`} disabled={locked}
+            onClick={() => chooseAction(onDelete)}>删除</button>
+        </div>
+      </div>
+    </div>
+    {editor.error && <p className="speaker-message" id={errorId} role="alert">名称未保存，请重试。</p>}
+  </li>;
 }

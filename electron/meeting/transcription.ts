@@ -1,16 +1,14 @@
 import type { MeetingDetail, MeetingLine, MeetingRecord, MeetingSource, MeetingSpeaker } from '../../shared/meeting-contracts';
-import { VOICEPRINT_MIN_VOICE_SECONDS } from '../../shared/speaker-contracts';
 import { pcmWaveHeader } from '../../shared/speech-audio';
 import { SPEECH_SAMPLE_RATE as rate } from '../../shared/speech-contracts';
 import type { SpeechEngine } from '../speech/engine';
-import { cosine, minimumMeetingVoiceSamples } from '../speech/speaker-timeline';
+import { minimumMeetingVoiceSamples, type VoiceprintVector } from '../speech/speaker-timeline';
 import type { MeetingCandidate, MeetingChunk } from '../speech/worker-contract';
 import { frameMs, type MeetingStore, type MeetingUpdate } from './store';
 import { meetingCut, MeetingSpeakers, mergeMeetingLines } from './timeline';
 
 const chunkFrames = 30 * rate;
 const contextFrames = 2 * rate;
-const selfMinimum = VOICEPRINT_MIN_VOICE_SECONDS * rate;
 const toFrame = (ms: number) => Math.round(ms / 1000 * rate);
 type Inference = Pick<SpeechEngine, 'begin' | 'end' | 'close' | 'embedding' | 'meetingChunk'>;
 type SourceChunk = MeetingChunk & { source: MeetingSource };
@@ -24,7 +22,7 @@ export class MeetingTranscription {
   constructor(
     private readonly store: MeetingStore,
     private readonly engine: Inference,
-    private readonly voiceprint: () => number[] | null,
+    private readonly voiceprints: () => readonly VoiceprintVector[],
     private readonly publish: () => void,
   ) {}
 
@@ -99,7 +97,7 @@ export class MeetingTranscription {
       if (interrupted()) return;
       let start = batches.at(-1)?.endFrame ?? 0;
       await this.save(id, { status: 'transcribing', processedMs: frameMs(start), error: '' });
-      const profile = this.voiceprint(), speakers = new MeetingSpeakers(profile);
+      const speakers = new MeetingSpeakers(this.voiceprints());
       if (start) await this.restoreSpeakers(record, speakers, batches.flatMap(batch => batch.lines));
       let recent = batches.slice(-2).flatMap(batch => batch.lines);
       while (start < total && !interrupted()) {
@@ -116,7 +114,7 @@ export class MeetingTranscription {
         const end = readUntil === total ? total : readFrom + toFrame(meetingCut(
           sources.flatMap(source => source.lines), frameMs(start + chunkFrames - readFrom),
         ));
-        const lines = this.labelChunk(id, sources, speakers, profile, recent, offsetMs, frameMs(start), frameMs(end), end === total);
+        const lines = this.labelChunk(id, sources, speakers, recent, offsetMs, frameMs(start), frameMs(end), end === total);
         await this.store.append(id, { startFrame: start, endFrame: end, lines });
         await this.save(id, { processedMs: Math.min(record.durationMs, frameMs(end)) });
         start = end;
@@ -134,7 +132,7 @@ export class MeetingTranscription {
     }
   }
 
-  private labelChunk(id: string, sources: SourceChunk[], speakers: MeetingSpeakers, profile: number[] | null,
+  private labelChunk(id: string, sources: SourceChunk[], speakers: MeetingSpeakers,
     recent: MeetingLine[], offset: number, from: number, to: number, final: boolean): MeetingLine[] {
     const bindings = new Map<string, { chunk: SourceChunk; candidate: MeetingCandidate }>();
     const lines = sources.flatMap(chunk => chunk.lines.flatMap((candidate, index) => {
@@ -156,10 +154,7 @@ export class MeetingTranscription {
       const key = chunk.source + ':' + voice.group;
       let label = assigned.get(key);
       if (label === undefined) {
-        const own = profile ? cosine(voice.vector, profile) : -1;
-        const allowSelf = !!profile && voice.samples >= selfMinimum && chunk.voices.every(other =>
-          other === voice || other.samples < selfMinimum || own - cosine(other.vector, profile) >= .08);
-        label = speakers.assign(voice.vector, allowSelf);
+        label = speakers.assign(voice, chunk.voices);
         assigned.set(key, label);
       }
       return { ...line, speaker: label };

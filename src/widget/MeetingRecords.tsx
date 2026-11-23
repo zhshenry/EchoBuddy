@@ -1,6 +1,8 @@
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
-import { FolderOpen, Pause, Play, Trash } from '@phosphor-icons/react';
-import { MEETING_SOURCE_NAMES, type MeetingLibrary, type MeetingLine, type MeetingRecord, type MeetingSpeaker } from '../../shared/meeting-contracts';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { FolderOpen, Pause, Play, Trash, Users } from '@phosphor-icons/react';
+import { MEETING_SOURCE_NAMES, type MeetingLibrary, type MeetingLine, type MeetingRecord, type NamedMeetingSpeaker } from '../../shared/meeting-contracts';
+import { MeetingSpeakerMenu, speakerName, type SpeakerSummary } from './MeetingSpeakerMenu';
+import { useInlineName } from './useInlineName';
 
 const desktop = window.echoBuddy;
 const dateFormat = new Intl.DateTimeFormat('zh-CN', { month: 'long', day: 'numeric', year: 'numeric' });
@@ -17,12 +19,6 @@ function dayOf(time: number): string {
   if (date === today.toDateString()) return '今天';
   today.setDate(today.getDate() - 1);
   return date === today.toDateString() ? '昨天' : dateFormat.format(time);
-}
-
-function speakerName(speaker: MeetingSpeaker): string {
-  if (speaker === 'self') return '我';
-  if (speaker === 'unknown') return '未确认';
-  return '说话人 ' + (speaker < 26 ? String.fromCharCode(65 + speaker) : speaker + 1);
 }
 
 function recordStatus(record: MeetingRecord): string {
@@ -74,7 +70,7 @@ export function MeetingRecords({ selected, onSelect }: { selected?: string; onSe
         </button>)}
       </section>)}
     </nav>}
-    {record ? <MeetingReview key={record.id} record={record} />
+    {record ? <MeetingReview key={record.id} record={record} voiceprintNames={library?.voiceprintNames} />
       : <div className="meeting-details meeting-empty" role="status" tabIndex={-1}>
         <strong>{library?.error || (library ? '暂无会议记录' : '正在读取会议记录…')}</strong>
         {library && !library.error && <p>在浮窗的「录音模式」选择「会议录音」，停录后可在这里回看。</p>}
@@ -82,9 +78,10 @@ export function MeetingRecords({ selected, onSelect }: { selected?: string; onSe
   </section>;
 }
 
-function MeetingReview({ record }: { record: MeetingRecord }) {
-  const [titleMode, setTitleMode] = useState<'view' | 'edit' | 'saving' | 'error'>('view');
+function MeetingReview({ record, voiceprintNames }: { record: MeetingRecord; voiceprintNames?: MeetingLibrary['voiceprintNames'] }) {
+  const titleEdit = useInlineName(record.title, name => desktop.renameMeeting(record.id, name));
   const [lines, setLines] = useState<MeetingLine[]>([]);
+  const [speakerPanel, setSpeakerPanel] = useState<NamedMeetingSpeaker | 'list' | null>(null);
   const [detailError, setDetailError] = useState('');
   const [folderError, setFolderError] = useState('');
   const [deleting, setDeleting] = useState(false);
@@ -94,20 +91,44 @@ function MeetingReview({ record }: { record: MeetingRecord }) {
   const [playing, setPlaying] = useState(false);
   const [playError, setPlayError] = useState('');
   const deleteDialog = useRef<HTMLDialogElement>(null);
-  const titleButton = useRef<HTMLButtonElement>(null);
-  const restoreTitleFocus = useRef(false);
+  const speakerListButton = useRef<HTMLButtonElement>(null);
+  const speakerPanelOrigin = useRef<HTMLButtonElement>(null);
   const player = useRef<HTMLAudioElement>(null);
   const secondTrack = useRef<HTMLAudioElement>(null);
   const playbackRequest = useRef(0);
   const duration = record.durationMs / 1000;
   const { id, processedMs, status } = record;
-
-  useLayoutEffect(() => {
-    if (titleMode === 'view' && restoreTitleFocus.current) {
-      restoreTitleFocus.current = false;
-      titleButton.current?.focus();
+  const speakers = useMemo(() => {
+    const groups = new Map<NamedMeetingSpeaker, SpeakerSummary>();
+    // meeting:detail supplies lines in chronological order.
+    for (const { speaker, startMs } of lines) {
+      if (speaker === 'unknown') continue;
+      const group = groups.get(speaker);
+      if (group) group.count++;
+      else groups.set(speaker, { speaker, count: 1, startMs });
     }
-  }, [titleMode]);
+    return [...groups.values()];
+  }, [lines]);
+  const speakerDefaults = useMemo(() => {
+    const defaults = { ...voiceprintNames };
+    let next = 0;
+    for (const { speaker } of speakers) {
+      if (typeof speaker === 'number') next = Math.max(next, speaker + 1);
+    }
+    for (const { speaker } of speakers) {
+      if (typeof speaker === 'string' && speaker !== 'self' && !defaults[speaker]) defaults[speaker] = speakerName(next++);
+    }
+    return defaults;
+  }, [speakers, voiceprintNames]);
+  const closeSpeakerPanel = useCallback((refocus: boolean) => {
+    setSpeakerPanel(null);
+    if (refocus) speakerPanelOrigin.current?.focus({ preventScroll: true });
+  }, []);
+
+  function openSpeakerPanel(origin: HTMLButtonElement, speaker: NamedMeetingSpeaker | 'list') {
+    speakerPanelOrigin.current = origin;
+    setSpeakerPanel(speaker);
+  }
 
   useEffect(() => {
     let current = true;
@@ -124,27 +145,6 @@ function MeetingReview({ record }: { record: MeetingRecord }) {
     const first = player.current, second = secondTrack.current;
     return () => { playbackRequest.current++; first?.pause(); second?.pause(); };
   }, []);
-
-  function closeTitleEditor(refocus: boolean) {
-    restoreTitleFocus.current = refocus;
-    setTitleMode('view');
-  }
-
-  async function saveTitle(input: HTMLInputElement, refocus = false) {
-    if (titleMode === 'saving') return;
-    const title = input.value.trim();
-    if (!title || title === record.title) {
-      closeTitleEditor(refocus);
-      return;
-    }
-    setTitleMode('saving');
-    try {
-      await desktop.renameMeeting(id, title);
-      closeTitleEditor(refocus && document.activeElement === input);
-    } catch {
-      setTitleMode('error');
-    }
-  }
 
   function seek(seconds: number) {
     const next = Math.min(duration, Math.max(0, seconds));
@@ -210,34 +210,25 @@ function MeetingReview({ record }: { record: MeetingRecord }) {
   }
 
   const progress = status === 'transcribing' && processedMs > 0 ? ' · ' + Math.min(99, Math.floor(processedMs / record.durationMs * 100)) + '%' : '';
-  return <section className="meeting-details" aria-labelledby="meeting-title">
+  return <section className="meeting-details meeting-review" aria-labelledby="meeting-title">
     <div className="meeting-detail-header">
       <div className="meeting-heading">
         <h2 id="meeting-title" aria-label={record.title}>
-          {titleMode === 'view' ? <button type="button" className="meeting-title-control" ref={titleButton}
-            aria-label={record.title + '，编辑会议名称'} title="编辑会议名称" onClick={() => setTitleMode('edit')}>
-            {record.title}
-          </button> : <input type="text" className="meeting-title-control" aria-label="会议名称"
-            aria-describedby={titleMode === 'error' ? 'meeting-title-error' : undefined}
-            defaultValue={record.title} readOnly={titleMode === 'saving'} autoFocus
-            onFocus={event => event.currentTarget.select()}
-            onBlur={event => void saveTitle(event.currentTarget)}
-            onKeyDown={event => {
-              if (event.nativeEvent.isComposing) return;
-              if (event.key === 'Enter') {
-                event.preventDefault();
-                void saveTitle(event.currentTarget, true);
-              } else if (event.key === 'Escape') {
-                event.preventDefault();
-                event.stopPropagation();
-                if (titleMode !== 'saving') closeTitleEditor(true);
-              }
-            }} />}
+          {titleEdit.editing ? <input {...titleEdit.inputProps} className="inline-name-control" aria-label="会议名称"
+            aria-describedby={titleEdit.error ? 'meeting-title-error' : undefined} />
+            : <button {...titleEdit.buttonProps} className="inline-name-control"
+              aria-label={record.title + '，编辑会议名称'} title="编辑会议名称">{record.title}</button>}
         </h2>
-        <p>{titleMode === 'error' ? <span className="meeting-title-error" id="meeting-title-error" role="alert">名称未保存，请重试。</span>
+        <p>{titleEdit.error ? <span className="inline-name-error" id="meeting-title-error" role="alert">名称未保存，请重试。</span>
           : record.sources.map(source => MEETING_SOURCE_NAMES[source]).join(' · ')}</p>
       </div>
       <div className="meeting-header-actions">
+        <button type="button" className="meeting-speakers" ref={speakerListButton} aria-haspopup="dialog"
+          aria-expanded={speakerPanel !== null} aria-controls={speakerPanel !== null ? 'meeting-speaker-menu' : undefined}
+          onClick={event => {
+            if (speakerPanel === null) openSpeakerPanel(event.currentTarget, 'list');
+            else closeSpeakerPanel(false);
+          }}><Users size={17} aria-hidden="true" />说话人（{speakers.length}）</button>
         <button type="button" className="meeting-folder" onClick={() => void openFolder()}>
           <FolderOpen size={17} aria-hidden="true" />打开录音文件夹
         </button>
@@ -245,17 +236,20 @@ function MeetingReview({ record }: { record: MeetingRecord }) {
           setDeleteError(false);
           deleteDialog.current?.showModal();
         }}><Trash size={17} aria-hidden="true" />删除录音</button>
+        {speakerPanel !== null && <MeetingSpeakerMenu key={speakerPanel} record={record} speakers={speakers} speakerDefaults={speakerDefaults}
+          initialSpeaker={speakerPanel === 'list' ? null : speakerPanel} listButton={speakerListButton}
+          onPlay={start => void play(start)} onClose={closeSpeakerPanel} />}
       </div>
     </div>
-    <dialog ref={deleteDialog} className="meeting-delete-dialog" role="alertdialog"
+    <dialog ref={deleteDialog} className="settings-confirm-dialog" role="alertdialog"
       aria-labelledby="meeting-delete-title" aria-describedby="meeting-delete-description"
       onCancel={event => { if (deleting) event.preventDefault(); }}>
       <h3 id="meeting-delete-title">删除录音？</h3>
       <p id="meeting-delete-description">「{record.title}」的录音和转写会一起移到 Windows 回收站。</p>
       {deleteError && <p className="meeting-warning" role="alert">无法将录音移到回收站，请重试。</p>}
-      <div className="meeting-delete-actions">
+      <div className="settings-confirm-actions">
         <button type="button" disabled={deleting} onClick={() => deleteDialog.current?.close()}>取消</button>
-        <button type="button" className="meeting-delete-confirm" disabled={deleting} onClick={() => void deleteRecording()}>
+        <button type="button" className="settings-confirm" disabled={deleting} onClick={() => void deleteRecording()}>
           {deleting ? '正在删除…' : '移到回收站'}
         </button>
       </div>
@@ -286,16 +280,21 @@ function MeetingReview({ record }: { record: MeetingRecord }) {
       {record.error && <p className="meeting-warning" role="status">{record.error}</p>}
       {lines.length ? <ol aria-label="按时间排列的转写">
         {lines.map(line => {
+          const { speaker } = line;
           const start = line.startMs / 1000, end = line.endMs / 1000;
           const active = time >= start && time < end;
+          const name = speakerName(speaker, record.speakerNames, speakerDefaults);
           return <li key={line.id}>
-            <button type="button" className="meeting-transcript-line" aria-current={active ? 'true' : undefined}
-              onClick={() => void play(start)}>
-              <time>{clock(start, true)}</time>
-              <strong data-self={line.speaker === 'self'}>{speakerName(line.speaker)}</strong>
+            <div className="meeting-transcript-line" aria-current={active ? 'true' : undefined}>
+              <button type="button" className="meeting-line-play" aria-label={`从 ${clock(start, true)} 播放`} onClick={() => void play(start)}>
+                <time>{clock(start, true)}</time>
+              </button>
+              {speaker === 'unknown' ? <strong className="meeting-line-speaker">{name}</strong> :
+                <button type="button" className="meeting-line-speaker" data-self={speaker === 'self'}
+                  aria-label={`给${name}改名`} title={name} onClick={event => openSpeakerPanel(event.currentTarget, speaker)}>{name}</button>}
               <span className="meeting-line-source">{MEETING_SOURCE_NAMES[line.source]}</span>
               <span className="meeting-line-text">{line.text}</span>
-            </button>
+            </div>
           </li>;
         })}
       </ol> : status === 'ready' && !detailError && <p className="meeting-subtle">这场录音没有识别到语音。</p>}

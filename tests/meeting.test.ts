@@ -10,6 +10,9 @@ import type { MeetingChunk } from '../electron/speech/worker-contract';
 import { MEETING_MAX_FRAMES, type MeetingLine } from '../shared/meeting-contracts';
 import { encodeSpeechWave, pcmWaveHeader, validateSpeechWave } from '../shared/speech-audio';
 
+const guest = 'voiceprint:bee50cc0-508d-4b02-ac5e-ecc4328975ed' as const;
+const secondGuest = 'voiceprint:acf7aa8c-ad61-4b0e-90db-af0c593ffed1' as const;
+
 async function library(t: TestContext) {
   const root = await mkdtemp(resolve('.echobuddy-meeting-test-'));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -45,6 +48,36 @@ test('renaming a meeting and saving transcription progress preserve both changes
   const reopened = new MeetingStore(root);
   await reopened.load();
   assert.deepEqual(reopened.list(), [{ ...record, title: '项目例会', status: 'ready', processedMs: 4000 }]);
+});
+
+test('speaker names survive reopen and concurrent transcription updates without rewriting speaker IDs', async t => {
+  const { root, store } = await library(t);
+  const record = await store.save({ ...await store.begin(['microphone'], 'auto'), status: 'transcribing', durationMs: 4000 });
+  const other = await store.save({ ...await store.begin(['microphone'], 'auto'), status: 'ready', durationMs: 1000 });
+  const line: MeetingLine = { id: 'first', startMs: 0, endMs: 1000, text: '周会开始', source: 'microphone', speaker: 4 };
+  const first = { startFrame: 0, endFrame: 16000, lines: [line, { ...line, id: 'guest', speaker: guest }] };
+  await store.append(record.id, first);
+
+  await Promise.all([
+    store.renameSpeaker(record.id, 4, '  周宁  '),
+    store.renameSpeaker(record.id, 'self', '主持人'),
+    store.renameSpeaker(record.id, guest, '嘉宾'),
+    store.update(record.id, { status: 'ready', processedMs: 4000 }),
+  ]);
+  await assert.rejects(store.renameSpeaker(record.id, 'unknown', '周宁'), /无效/);
+  await assert.rejects(store.renameSpeaker(record.id, 4, '   '), /不能为空/);
+
+  const reopened = new MeetingStore(root);
+  await reopened.load();
+  assert.deepEqual(reopened.get(record.id), {
+    ...record, status: 'ready', processedMs: 4000, speakerNames: { 4: '周宁', self: '主持人', [guest]: '嘉宾' },
+  });
+  assert.deepEqual(reopened.get(other.id), other);
+  assert.deepEqual(await reopened.batches(record.id), [first]);
+  await reopened.renameSpeaker(record.id, 4, null);
+  const restored = new MeetingStore(root);
+  await restored.load();
+  assert.deepEqual(restored.get(record.id)?.speakerNames, { self: '主持人', [guest]: '嘉宾' });
 });
 
 test('a meeting leaves the library only after its directory is moved to the recycle bin', async t => {
@@ -99,7 +132,7 @@ test('deleting a meeting being transcribed stops its worker and continues the re
       });
     },
   };
-  const transcription = new MeetingTranscription(store, engine, () => null, () => {
+  const transcription = new MeetingTranscription(store, engine, () => [], () => {
     if (store.get(next.id)?.status === 'ready') complete();
   });
   transcription.start();
@@ -141,20 +174,55 @@ const line = (properties: Partial<MeetingLine> = {}): MeetingLine => ({
   id: 'clip', startMs: 0, endMs: 4000, text: '我们先对一下今天的任务。', speaker: 'unknown', source: 'system', ...properties,
 });
 
+test('one recording recognizes several enrolled speakers and leaves close or short matches unconfirmed', { timeout: 5000 }, async t => {
+  const { store } = await library(t);
+  const base = await store.begin(['microphone'], 'auto');
+  await writeFile(store.track(base.id, 'microphone'), encodeSpeechWave(new Float32Array(35 * 16000)));
+  const record = await store.finish(base, '');
+  const closeMatch = voice(1).map((value, index) => (value + voice(2)[index]) / Math.sqrt(2));
+  let chunks = 0;
+  const engine = {
+    begin() {}, end() {}, close() {}, async embedding() { return null; },
+    async meetingChunk(): Promise<MeetingChunk> {
+      if (++chunks === 2) return {
+        lines: [{ startMs: 3000, endMs: 6800, group: 0, text: '继续讨论。' }],
+        voices: [{ group: 0, vector: voice(1), samples: 60000 }],
+      };
+      const vectors = [voice(0), voice(1), voice(2), closeMatch, voice(3), voice(1)];
+      return {
+        lines: vectors.map((_, group) => ({ group, startMs: group * 4000, endMs: group * 4000 + 3500, text: '发言 ' + group })),
+        voices: vectors.map((vector, group) => ({ group, vector, samples: group === 5 ? 20000 : 54000 })),
+      };
+    },
+  };
+  let completed!: () => void;
+  const ready = new Promise<void>(resolve => { completed = resolve; });
+  const transcription = new MeetingTranscription(store, engine, () => [
+    { id: 'self', vector: voice(0) }, { id: guest, vector: voice(1) }, { id: secondGuest, vector: voice(2) },
+  ], () => { if (store.get(record.id)?.status === 'ready') completed(); });
+  transcription.start();
+  await ready;
+  assert.deepEqual((await transcription.detail(record.id))?.lines.map(item => item.speaker),
+    ['self', guest, secondGuest, 'unknown', 0, 'unknown', guest]);
+});
+
 test('speaker labels are stable across batches and ambiguous matches stay unconfirmed', () => {
-  const speakers = new MeetingSpeakers(voice(2));
-  assert.equal(speakers.assign(voice(2), true), 'self');
-  assert.equal(speakers.assign(voice(0), true), 0);
-  assert.equal(speakers.assign(voice(1), true), 1);
-  assert.equal(speakers.assign(voice(0), true), 0);
-  assert.equal(speakers.assign(voice(2), false), 'unknown');
+  const clip = (vector: number[], samples = 48000) => ({ group: 0, vector, samples });
+  const speakers = new MeetingSpeakers([{ id: 'self', vector: voice(2) }]);
+  const own = clip(voice(2));
+  assert.equal(speakers.assign(own), 'self');
+  assert.equal(speakers.assign(clip(voice(0))), 0);
+  assert.equal(speakers.assign(clip(voice(1))), 1);
+  assert.equal(speakers.assign(clip(voice(0))), 0);
+  assert.equal(speakers.assign(clip(voice(2), 20000)), 'unknown');
+  assert.equal(speakers.assign(own, [own, { ...own, group: 1 }]), 'unknown');
   const ambiguous = voice(0).map((value, index) => (value + voice(1)[index]) / Math.sqrt(2));
-  assert.equal(speakers.assign(ambiguous, true), 'unknown');
-  const restarted = new MeetingSpeakers(null);
+  assert.equal(speakers.assign(clip(ambiguous)), 'unknown');
+  const restarted = new MeetingSpeakers([]);
   restarted.restore(0, voice(0));
   restarted.restore(1, null);
-  assert.equal(restarted.assign(voice(0), false), 0);
-  assert.equal(restarted.assign(voice(1), false), 2);
+  assert.equal(restarted.assign(clip(voice(0))), 0);
+  assert.equal(restarted.assign(clip(voice(1))), 2);
 });
 
 test('echoes on aligned tracks are merged without removing a later repeated sentence', () => {
@@ -187,7 +255,7 @@ test('a failed transcription retries from the last committed dual-source batch a
       return { lines, voices: [] };
     },
   };
-  const transcription = new MeetingTranscription(store, engine, () => null, () => {
+  const transcription = new MeetingTranscription(store, engine, () => [], () => {
     if (store.get(record.id)?.status === 'ready') completed();
   });
   await transcription.retry(record.id);

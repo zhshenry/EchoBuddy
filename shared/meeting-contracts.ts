@@ -1,4 +1,5 @@
 import { SPEECH_SAMPLE_RATE, type SpeechLanguage } from './speech-contracts';
+import type { VoiceprintId } from './speaker-contracts';
 
 export const MEETING_SOURCES = ['microphone', 'system'] as const;
 export type MeetingSource = typeof MEETING_SOURCES[number];
@@ -36,9 +37,11 @@ export interface MeetingRecord {
   status: MeetingStatus;
   warning: string;
   error: string;
+  speakerNames?: Partial<Record<NamedMeetingSpeaker, string>>;
 }
 
-export type MeetingSpeaker = 'self' | 'unknown' | number;
+export type MeetingSpeaker = VoiceprintId | 'unknown' | number;
+export type NamedMeetingSpeaker = Exclude<MeetingSpeaker, 'unknown'>;
 export interface MeetingRecognition {
   language?: string;
   emotion?: string;
@@ -65,4 +68,5 @@ export interface MeetingDetail {
 export interface MeetingLibrary {
   records: MeetingRecord[];
   error: string;
+  voiceprintNames?: Partial<Record<VoiceprintId, string>>;
 }

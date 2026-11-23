@@ -371,6 +371,31 @@ kbd {
 .settings-section :is(h2, h3) { margin: 0 0 9px; }
 .settings-section .row > h2 { margin: 0; }
 .settings-content .settings-inline-row { flex-wrap: wrap; }
+.inline-name-control {
+  display: block; max-width: 100%; height: 1lh; padding: 0; border: 0; border-radius: 4px;
+  background: transparent; color: inherit; font: inherit; text-align: start;
+}
+button.inline-name-control { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+button.inline-name-control:hover:enabled, .inline-name-error { color: var(--acc-deep); }
+input.inline-name-control { width: 100%; outline: 1px solid var(--line); outline-offset: 2px; }
+input.inline-name-control:focus { outline: 2px solid var(--acc-deep); }
+.settings-confirm-dialog {
+  width: min(360px, calc(100% - 32px)); max-height: calc(100% - 32px); margin: auto; padding: 20px;
+  border: 1px solid var(--line); border-radius: 14px; background: var(--surface); color: var(--ink);
+  box-shadow: 0 5px 12px #20232b26; overflow-wrap: anywhere;
+}
+.settings-confirm-dialog::backdrop { inset: 12px; border-radius: 14px; background: color-mix(in srgb, var(--ink) 32%, transparent); }
+.settings-confirm-dialog h3 { margin: 0; font-size: 16px; }
+.settings-confirm-dialog p { margin: 8px 0 0; }
+.settings-confirm-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+.settings-confirm-dialog button {
+  display: inline-flex; gap: 6px; align-items: center; min-height: var(--control-height);
+  padding: 0 9px; border: 0; border-radius: 7px; background: var(--meeting-shell, #f3f4f6); color: var(--muted); white-space: nowrap;
+}
+.settings-confirm-dialog button:not(.settings-confirm):hover:enabled { color: var(--acc-deep); background: var(--tint); }
+.settings-confirm-dialog .settings-confirm { min-width: 96px; justify-content: center; background: var(--acc-deep); color: white; }
+.settings-confirm-dialog .settings-confirm:hover:enabled { background: color-mix(in srgb, var(--acc-deep) 84%, black); }
+.settings-confirm-dialog button:disabled { opacity: .65; }
 .settings-updates .update { border-top: 0; }
 .hotword-controls { display: flex; gap: 8px; align-items: center; }
 .hotword-controls input {
@@ -459,8 +484,52 @@ kbd {
 .speaker-actions .speaker-record { background: var(--tint); color: var(--acc-deep); font-weight: var(--semibold); }
 .speaker-actions button:hover:enabled { background: #f0f1f2; }
 .speaker-actions button:disabled { color: var(--muted); background: #f3f4f4; }
+.voiceprint-list {
+  margin: 8px 0 0; padding: 0 12px; list-style: none; border: 1px solid var(--line); border-radius: 8px;
+}
+.voiceprint-list > li + li { border-top: 1px solid var(--line); }
+.voiceprint-person { min-height: 35px; }
+.voiceprint-person-name { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
+.voiceprint-name { min-width: 0; height: var(--compact-control-height); font-size: var(--secondary-text-size); }
+button.voiceprint-name { display: inline-flex; align-items: center; gap: 6px; }
+.voiceprint-name span { overflow: hidden; text-overflow: ellipsis; }
+.voiceprint-name svg { flex: none; color: var(--muted); }
+.voiceprint-name:hover:enabled svg { color: currentColor; }
+input.voiceprint-name { flex: 0 1 15rem; max-width: 15rem; }
+.voiceprint-role { color: var(--muted); font-size: var(--caption-size); white-space: nowrap; }
+.voiceprint-actions { flex: none; }
+.voiceprint-more {
+  display: grid; place-items: center; width: var(--compact-control-height); height: var(--compact-control-height);
+  padding: 0; border: 1px solid var(--line); border-radius: 6px; background: #f3f4f4; color: var(--muted);
+}
+.voiceprint-more:enabled:is(:hover, :has(+ :popover-open)) { background: #eceef0; color: var(--ink); }
+.voiceprint-more:disabled { opacity: .56; }
+.voiceprint-actions-menu {
+  position-anchor: auto; inset: auto; top: anchor(bottom); right: anchor(right); margin: 4px 0;
+  position-try-fallbacks: flip-block;
+  position-visibility: anchors-visible; min-width: 108px; padding: 4px; border: 1px solid var(--line); border-radius: 8px;
+  color: var(--ink); background: var(--surface); box-shadow: 0 4px 10px #20232b21;
+}
+.voiceprint-actions-menu button {
+  display: block; width: 100%; min-height: var(--control-height); padding: 0 9px;
+  border: 0; border-radius: 5px; background: transparent; text-align: start;
+}
+.voiceprint-actions-menu button:enabled:is(:hover, :focus-visible) { background: #f0f1f2; }
+.voiceprint-actions-menu button:focus-visible { outline-offset: -2px; }
+.voiceprint-actions-menu button:disabled { color: var(--muted); }
+.voiceprint-list .speaker-message { margin: 0 0 7px; }
+.speaker-name-row { justify-content: flex-start; align-items: center; margin-top: 10px; }
+.speaker-name-row label { font-size: var(--control-text-size); font-weight: var(--semibold); }
+.speaker-name-row input {
+  flex: 0 1 190px; min-width: 0; height: var(--control-height); padding: 0 9px;
+  border: 1px solid var(--line); border-radius: 7px; background: var(--surface); color: var(--ink);
+  font: inherit; font-size: var(--control-text-size);
+}
+.speaker-name-row input:focus-visible { outline: 2px solid var(--acc-deep); outline-offset: -1px; }
 .voiceprint-step { margin-top: 10px; padding: 12px; border: 1px solid var(--line); border-radius: 8px; }
 .voiceprint-step .speaker-actions { margin-top: 10px; }
+.voiceprint-step .speaker-name-row, .voiceprint-target { margin: 0 0 8px; }
+.voiceprint-target { overflow-wrap: anywhere; }
 .voiceprint-prompt { margin: 0; }
 .speaker-message { margin: 7px 0 0; color: var(--acc-deep); font-size: var(--secondary-text-size); }
 .more-settings-button {

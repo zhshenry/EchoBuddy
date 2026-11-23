@@ -6,8 +6,8 @@ import { pathToFileURL } from 'node:url';
 import { autoUpdater } from 'electron-updater';
 import { isBotAvatar } from '../shared/bot-avatar';
 import { AVAILABLE_RECORDING_MODES, resolveSettingsPage, type LanguagePanelAnchor, type Preferences, type RecordingMode, type SettingsDestination, type SettingsPage, type WriteTiming } from '../shared/desktop';
-import { MEETING_SOURCES, type MeetingLibrary, type MeetingSource } from '../shared/meeting-contracts';
-import type { SpeakerCapture } from '../shared/speaker-contracts';
+import { MEETING_SOURCES, type MeetingLibrary, type MeetingSource, type MeetingSpeaker } from '../shared/meeting-contracts';
+import type { SpeakerCapture, VoiceprintEnrollment, VoiceprintId } from '../shared/speaker-contracts';
 import { RECOGNITION_LANGUAGES, type RecognitionLanguage } from '../shared/speech-contracts';
 import { Dictation } from './dictation';
 import { meetingAudio } from './meeting/audio-response';
@@ -201,14 +201,15 @@ async function start() {
   let loadingMeetings: Promise<void> | undefined;
   let libraryError = '';
   function library(): MeetingLibrary {
-    return { records: meetingStore.list(), error: libraryError };
+    const voiceprintNames = Object.fromEntries(speaker.listProfiles().map(({ id, name }) => [id, name]));
+    return { records: meetingStore.list(), error: libraryError, voiceprintNames };
   }
   function publishLibrary() {
     if (settingsDestination.page === 'meetings' && settingsWindow && !settingsWindow.isDestroyed()) {
       settingsWindow.webContents.send('meeting:library', library());
     }
   }
-  const transcription = new MeetingTranscription(meetingStore, new SpeechEngine(speechDirectory), () => speaker.voiceprint, publishLibrary);
+  const transcription = new MeetingTranscription(meetingStore, new SpeechEngine(speechDirectory), () => speaker.voiceprints, publishLibrary);
   function prepareMeetings(): Promise<void> {
     if (!loadingMeetings) {
       loadingMeetings = meetingStore.load().then(() => {
@@ -373,6 +374,11 @@ async function start() {
     await meetingStore.update(id, { title: name });
     publishLibrary();
   }, 'settings');
+  handle('meeting:rename-speaker', async (id: string, speaker: MeetingSpeaker, name: string | null) => {
+    if (typeof id !== 'string') throw new Error('找不到这场会议。');
+    await meetingStore.renameSpeaker(id, speaker, name);
+    publishLibrary();
+  }, 'settings');
   handle('meeting:delete', async (id: string) => {
     if (typeof id !== 'string' || !meetingId.test(id)) throw new Error('会议记录无效。');
     await transcription.trash(id, path => shell.trashItem(path));
@@ -398,12 +404,25 @@ async function start() {
   handle('settings:destination', () => settingsDestination, 'settings');
   handle('settings:minimize', () => settingsWindow?.minimize(), 'settings');
   handle('settings:close', () => settingsWindow?.close(), 'settings');
-  handle('speaker:profile', () => speaker.enrolled, 'settings');
-  handle('speaker:begin', (mode: SpeakerCapture) =>
-    editing || meeting.active || updates.isInstalling() || dictation.snapshot().phase !== 'idle' ? null : speaker.begin(mode), 'settings');
-  handle('speaker:finish', (id: string, audio: Uint8Array) => speaker.finish(id, audio), 'settings');
+  handle('speaker:profiles', () => speaker.listProfiles(), 'settings');
+  handle('speaker:rename', (id: VoiceprintId, name: unknown) => {
+    const profiles = speaker.renameProfile(id, name);
+    publishLibrary();
+    return profiles;
+  }, 'settings');
+  handle('speaker:begin', (mode: SpeakerCapture, target?: VoiceprintEnrollment) =>
+    editing || meeting.active || updates.isInstalling() || dictation.snapshot().phase !== 'idle' ? null : speaker.begin(mode, target), 'settings');
+  handle('speaker:finish', async (id: string, audio: Uint8Array) => {
+    const result = await speaker.finish(id, audio);
+    if (result.type === 'enrollment' && result.saved) publishLibrary();
+    return result;
+  }, 'settings');
   handle('speaker:cancel', (keepSamples?: boolean) => speaker.cancel(keepSamples === true), 'settings');
-  handle('speaker:delete', () => speaker.deleteProfile(), 'settings');
+  handle('speaker:delete', (id: VoiceprintId) => {
+    const profiles = speaker.deleteProfile(id);
+    publishLibrary();
+    return profiles;
+  }, 'settings');
   handle('preferences:recording-mode', (mode: RecordingMode) => {
     if (!AVAILABLE_RECORDING_MODES.includes(mode) || meeting.active || dictation.snapshot().phase !== 'idle' || mode === saved.recordingMode) return;
     saved.recordingMode = mode;

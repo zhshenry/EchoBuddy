@@ -1,5 +1,5 @@
 import type { RecognitionLanguage } from './speech-contracts';
-import type { SpeakerCapture, SpeakerCaptureResult } from './speaker-contracts';
+import type { SpeakerCapture, SpeakerCaptureResult, VoiceprintEnrollment, VoiceprintId, VoiceprintProfile } from './speaker-contracts';
 
 export const SHORT_DICTATION_MAX_SECONDS = 120;
 
@@ -87,6 +87,7 @@ export interface DesktopBridge {
   meetingLibrary(): Promise<MeetingLibrary>;
   meetingDetail(id: string): Promise<MeetingDetail | null>;
   renameMeeting(id: string, title: string): Promise<void>;
+  renameMeetingSpeaker(id: string, speaker: NamedMeetingSpeaker, name: string | null): Promise<void>;
   deleteMeeting(id: string): Promise<void>;
   retryMeeting(id: string): Promise<void>;
   openMeetingFolder(id: string): Promise<string>;
@@ -102,11 +103,12 @@ export interface DesktopBridge {
   settingsDestination(): Promise<SettingsDestination>;
   minimizeSettings(): Promise<void>;
   closeSettings(): Promise<void>;
-  hasVoiceprint(): Promise<boolean>;
-  beginSpeakerCapture(mode: SpeakerCapture): Promise<string | null>;
+  voiceprints(): Promise<VoiceprintProfile[]>;
+  renameVoiceprint(id: VoiceprintId, name: string): Promise<VoiceprintProfile[]>;
+  beginSpeakerCapture(mode: SpeakerCapture, target?: VoiceprintEnrollment): Promise<string | null>;
   finishSpeakerCapture(id: string, audio: Uint8Array): Promise<SpeakerCaptureResult>;
   cancelSpeakerCapture(keepSamples?: boolean): Promise<void>;
-  deleteVoiceprint(): Promise<void>;
+  deleteVoiceprint(id: VoiceprintId): Promise<VoiceprintProfile[]>;
   setRecordingMode(mode: RecordingMode): Promise<void>;
   toggleMeetingSource(source: MeetingSource): Promise<void>;
   setWriteTiming(timing: WriteTiming): Promise<void>;
@@ -134,4 +136,4 @@ export interface DesktopBridge {
 declare global {
   interface Window { echoBuddy: DesktopBridge }
 }
-import type { MeetingCaptureState, MeetingDetail, MeetingLibrary, MeetingSource } from './meeting-contracts';
+import type { MeetingCaptureState, MeetingDetail, MeetingLibrary, MeetingSource, NamedMeetingSpeaker } from './meeting-contracts';

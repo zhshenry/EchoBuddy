@@ -68,7 +68,7 @@ export function SettingsWindow({ dictation, meeting, preferences, update }: Desk
     function keydown(event: KeyboardEvent) {
       if (event.repeat || event.isComposing) return;
       if (event.key === 'Escape') {
-        if (document.querySelector('dialog:modal')) return;
+        if (document.querySelector('dialog:modal, [popover]:popover-open')) return;
         event.preventDefault();
         if (languagesOpen) void desktop.closeLanguagePanel();
         else if (binding) {
