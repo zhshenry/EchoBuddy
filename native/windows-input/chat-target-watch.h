@@ -95,11 +95,9 @@ private:
 
     static LRESULT CALLBACK mouseEvent(int code, WPARAM event, LPARAM data) {
         if (code == HC_ACTION && event != WM_MOUSEMOVE) {
-            // Read the pointer and hit-test the window in the same DPI context.
-            POINT cursor{};
+            const auto* input = reinterpret_cast<const MSLLHOOKSTRUCT*>(data);
             DWORD pid = 0;
-            if (GetCursorPos(&cursor))
-                GetWindowThreadProcessId(GetAncestor(WindowFromPoint(cursor), GA_ROOT), &pid);
+            GetWindowThreadProcessId(GetAncestor(WindowFromPoint(input->pt), GA_ROOT), &pid);
             if (pid != active_->appPid_) active_->changed_ = true;
         }
         return CallNextHookEx(nullptr, code, event, data);
@@ -109,8 +107,8 @@ private:
         if (window != active_->foreground_) active_->changed_ = true;
     }
 
-    static void CALLBACK editorFocusEvent(HWINEVENTHOOK, DWORD, HWND, LONG, LONG, DWORD, DWORD) {
-        active_->editorChanged_ = true;
+    static void CALLBACK editorFocusEvent(HWINEVENTHOOK, DWORD, HWND window, LONG, LONG, DWORD, DWORD) {
+        if (!window || GetAncestor(window, GA_ROOT) == active_->foreground_) active_->editorChanged_ = true;
     }
 
     inline static thread_local ChatTargetWatch* active_ = nullptr;
