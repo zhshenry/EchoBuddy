@@ -23,6 +23,8 @@ export function createOverlay(
   let motion: number | undefined;
   let motionTimer: NodeJS.Timeout | undefined;
   let motionId = 0;
+  let needsRestoreRefresh = false;
+  let restoreRefreshTask: NodeJS.Immediate | undefined;
 
   const window = new BrowserWindow({
     x: anchor.x, y: anchor.y, width, height, minWidth: width, minHeight,
@@ -155,12 +157,31 @@ export function createOverlay(
     outsideSince = undefined;
     clearTimeout(pointerTimer);
   }
+  function refreshAfterRestore() {
+    if (!needsRestoreRefresh || restoreRefreshTask) return;
+    restoreRefreshTask = setImmediate(() => {
+      restoreRefreshTask = undefined;
+      if (window.isDestroyed() || window.isMinimized() || !window.isVisible()) return;
+      needsRestoreRefresh = false;
+      // showInactive can leave Chromium's mouse input child hidden on Windows.
+      const bounds = window.getBounds();
+      window.setBounds({ ...bounds, width: bounds.width + 1 });
+      window.setBounds(bounds);
+    });
+  }
   window.on('hide', pausePointerTracking);
-  window.on('minimize', pausePointerTracking);
-  window.on('show', syncPointerTracking);
+  window.on('minimize', () => {
+    needsRestoreRefresh = process.platform === 'win32';
+    pausePointerTracking();
+  });
+  window.on('show', () => {
+    syncPointerTracking();
+    refreshAfterRestore();
+  });
   window.on('restore', () => {
     applyShape();
     syncPointerTracking();
+    refreshAfterRestore();
   });
   window.webContents.on('did-start-loading', () => {
     stopCompactDrag();
@@ -226,6 +247,7 @@ export function createOverlay(
   screen.on('display-removed', displayChanged);
   screen.on('display-metrics-changed', displayChanged);
   window.on('closed', () => {
+    clearImmediate(restoreRefreshTask);
     clearTimeout(pointerTimer);
     clearTimeout(motionTimer);
     clearInterval(compactDrag?.timer);
