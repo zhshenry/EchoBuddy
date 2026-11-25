@@ -610,6 +610,18 @@ input.voiceprint-name { flex: 0 1 15rem; max-width: 15rem; }
   .settings-content .feedback-route-controls select:disabled { color: var(--muted); cursor: default; }
 }
 .settings-content .feedback-route-controls button { color: var(--muted); background: #f3f4f4; }
+.settings-content .feedback-network {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-width: 0; max-width: 100%; margin-top: 10px;
+}
+.settings-content .feedback-capsules {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-width: 0; max-width: 100%;
+}
+.settings-content .feedback-capsule {
+  max-width: 100%; min-width: 0; background: #f3f4f4; color: var(--ink); font-size: var(--secondary-text-size);
+}
+.settings-content .feedback-network-note {
+  min-width: 0; max-width: 100%; overflow-wrap: anywhere; color: var(--muted); font-size: var(--secondary-text-size);
+}
 .settings-content :is(.feedback-limit, .feedback-status) {
   color: var(--muted); font-size: var(--secondary-text-size); line-height: var(--body-line-height);
 }

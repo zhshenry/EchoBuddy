@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { FeedbackNetwork, COMPANY_PROBE, FEEDBACK_MAINTAINER } from '../electron/feedback-network';
 import { FeedbackWelink } from '../electron/feedback-welink';
-import { FeedbackService } from '../electron/feedback-service';
+import { FeedbackService, FEEDBACK_ORIGIN } from '../electron/feedback-service';
 import { feedbackStatus, feedbackSummary, feedbackMessageParts } from '../shared/feedback';
 import { WindowsInput } from '../electron/windows-input';
 import { Dictation } from '../electron/dictation';
@@ -129,6 +129,14 @@ test('saving for manual WeLink delivery never marks sent; later cloud import can
   offline = true;
   const last = await service.refresh(id);
   assert.equal(feedbackStatus(last), '处理中'); assert.match(last.error!, /无法查询处理状态/);
+});
+test('a feedback package does not include network probe addresses', t => {
+  const service = new FeedbackService(directory(t), 'echobuddy', '0.2.8', noCloud);
+  const record = service.prepare('合成测试', 'settings-feedback');
+  const payload = service.payload(record.payload.feedbackId);
+  assert.equal(payload.includes(new URL(COMPANY_PROBE).host), false);
+  assert.equal(payload.includes(new URL(FEEDBACK_ORIGIN).host), false);
+  assert.equal(payload.includes('/health'), false);
 });
 test('a long summary stays in two bounded IMs while preserving feedback id, recipient and original package', t => {
   const service = new FeedbackService(directory(t), 'echobuddy', 'test', noCloud);

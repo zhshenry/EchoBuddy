@@ -1,6 +1,39 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import { feedbackStatus, feedbackSummary, feedbackMessageParts, type FeedbackBridge, type FeedbackDelivery, type FeedbackMode, type FeedbackRecord } from '../../shared/feedback';
+import { feedbackCapsuleState, feedbackStatus, feedbackSummary, feedbackMessageParts, type FeedbackBridge, type FeedbackCapsuleState, type FeedbackDelivery, type FeedbackMode, type FeedbackRecord } from '../../shared/feedback';
 
+function detectionClock(value?: string): string {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+}
+
+function capsuleWord(state: FeedbackCapsuleState): string {
+  if (state === 'confirmed') return '已确认';
+  if (state === 'checking') return '检测中';
+  return '未确认';
+}
+
+export function FeedbackNetworkStatus({ checking, error, delivery }: {
+  checking: boolean;
+  error: string;
+  delivery?: Pick<FeedbackDelivery, 'company' | 'online' | 'checkedAt'>;
+}) {
+  const company = feedbackCapsuleState(checking, !!error, delivery?.company);
+  const online = feedbackCapsuleState(checking, !!error, delivery?.online);
+  const time = !checking && !error ? detectionClock(delivery?.checkedAt) : '';
+  const note = checking ? '检测中…' : error || (time ? `· ${time}` : !delivery ? '尚未检测' : '');
+  const summary = checking ? '正在检测公司网络和在线反馈服务'
+    : error || (!delivery ? '尚未检测反馈通道' : `公司内网${capsuleWord(company)}，公网${capsuleWord(online)}${time ? `，${time}` : ''}`);
+  return <div className="feedback-network" role="status" aria-busy={checking || undefined}>
+    <span className="visually-hidden">{summary}</span>
+    <div className="feedback-capsules" aria-hidden="true">
+      <span className={`feedback-capsule is-${company}`}><span className="feedback-capsule-dot" />公司内网</span>
+      <span className={`feedback-capsule is-${online}`}><span className="feedback-capsule-dot" />公网</span>
+    </div>
+    {note ? <span className="feedback-network-note" aria-hidden="true">{note}</span> : null}
+  </div>;
+}
 
 export function FeedbackPanel({ api, product, context = 'settings-about' }: { api: FeedbackBridge; product: string; context?: string }) {
   const key = `feedback-draft:${product}`;
@@ -11,7 +44,7 @@ export function FeedbackPanel({ api, product, context = 'settings-about' }: { ap
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [delivery, setDelivery] = useState<FeedbackDelivery>();
-  const [checking, setChecking] = useState(false);
+  const [checking, setChecking] = useState(true);
   const [networkError, setNetworkError] = useState('');
   const networkRevision = useRef(0);
   const gate = useRef(false);
@@ -75,8 +108,7 @@ export function FeedbackPanel({ api, product, context = 'settings-about' }: { ap
         </select>
         <button type="button" disabled={checking || busy} onClick={() => void checkDelivery(true)}>{checking ? '检测中…' : '重新检测'}</button>
       </div>
-      <p className="feedback-muted" role="status">{networkError || (checking ? '正在检测公司网络和在线反馈服务…' : delivery
-        ? `${delivery.company ? '已连接公司网络' : delivery.online ? '公司网络未确认，在线反馈可用' : '暂未检测到可用通道'}${delivery.checkedAt ? ` · ${new Date(delivery.checkedAt).toLocaleTimeString('zh-CN')}` : ''}` : '尚未检测反馈通道。')}</p>
+      <FeedbackNetworkStatus checking={checking} error={networkError} delivery={delivery} />
       <p className="feedback-muted">{channel === 'online' ? '发送位置：在线反馈服务。提交后可查询处理状态。'
         : welink ? `发送位置：WeLink 维护人 ${delivery?.receiver}。发送摘要后，还需将完整反馈包交给维护人。`
         : '反馈会保存在本机。你可以手动选择反馈方式，或保存反馈包。'}</p>
