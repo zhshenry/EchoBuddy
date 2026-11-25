@@ -585,6 +585,30 @@ input.voiceprint-name { flex: 0 1 15rem; max-width: 15rem; }
 .settings-content .feedback-route-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-width: 0; max-width: 100%; }
 .settings-content .feedback-route-controls label { margin: 0 auto 0 0; font-size: var(--control-text-size); font-weight: var(--semibold); }
 .settings-content .feedback-route-controls select { min-width: min(112px, 100%); max-width: 100%; min-height: var(--control-height); padding: 0 8px; border: 1px solid var(--line); border-radius: 7px; color: var(--ink); background: #f3f4f4; font: inherit; font-size: var(--control-text-size); }
+@supports (appearance: base-select) {
+  .settings-content .feedback-route-controls select,
+  .settings-content .feedback-route-controls select::picker(select) { appearance: base-select; }
+  .settings-content .feedback-route-controls select { align-items: center; justify-content: space-between; gap: 12px; cursor: pointer; }
+  .settings-content .feedback-route-controls select:enabled:is(:hover, :open) { border-color: #c6c9cc; background: #eceef0; }
+  .settings-content .feedback-route-controls select::picker-icon {
+    content: ""; width: 7px; height: 7px; margin-right: 2px; border-right: 1.5px solid; border-bottom: 1.5px solid;
+    color: var(--muted); rotate: 45deg; translate: 0 -2px;
+  }
+  .settings-content .feedback-route-controls select::picker(select) {
+    box-sizing: border-box; width: anchor-size(width); margin-block: 4px; padding: 4px;
+    border: 1px solid var(--line); border-radius: 8px; color: var(--ink); background: var(--surface);
+    box-shadow: 0 4px 10px #20232b21; font: inherit;
+  }
+  .settings-content .feedback-route-controls option {
+    display: flex; align-items: center; gap: 8px; min-height: var(--control-height); padding: 0 8px;
+    border-radius: 5px; color: var(--ink); background: transparent; cursor: pointer;
+  }
+  .settings-content .feedback-route-controls option:is(:hover, :focus-visible) { background: #f0f1f2; }
+  .settings-content .feedback-route-controls option:checked { color: var(--acc-deep); background: var(--tint); font-weight: var(--semibold); }
+  .settings-content .feedback-route-controls option:focus-visible { outline: 2px solid var(--acc-deep); outline-offset: -2px; }
+  .settings-content .feedback-route-controls option::checkmark { order: 1; margin-left: auto; }
+  .settings-content .feedback-route-controls select:disabled { color: var(--muted); cursor: default; }
+}
 .settings-content .feedback-route-controls button { color: var(--muted); background: #f3f4f4; }
 .settings-content :is(.feedback-limit, .feedback-status) {
   color: var(--muted); font-size: var(--secondary-text-size); line-height: var(--body-line-height);
@@ -627,6 +651,7 @@ input.voiceprint-name { flex: 0 1 15rem; max-width: 15rem; }
   border-radius: 7px; background: #fafafb; white-space: pre-wrap; overflow-wrap: anywhere;
 }
 .settings-content .feedback-panel pre.feedback-summary { font-family: inherit; line-height: var(--body-line-height); }
+.settings-content .feedback-panel .feedback-muted { overflow-wrap: anywhere; }
 .settings-content .feedback-history { margin-top: 16px; }
 .settings-content .feedback-history > summary {
   padding: 12px 0; font-size: var(--section-title-size); font-weight: var(--semibold); line-height: var(--compact-line-height);

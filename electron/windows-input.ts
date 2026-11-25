@@ -1,5 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createInterface } from 'node:readline';
+import { recordFeedbackEvent } from './feedback-service';
 
 export type WriteResult = 'written' | 'moved' | 'partial' | 'paste-unconfirmed' | 'unavailable';
 export type CaptureResult = 'captured' | 'paste-on-stop' | 'unavailable';
@@ -23,12 +24,16 @@ export class WindowsInput {
       command += ` ${code} ${modifiers}`;
     }
     const value = await this.ask(command);
-    return value === 'captured' || value === 'paste-on-stop' ? value : 'unavailable';
+    const result = value === 'captured' || value === 'paste-on-stop' ? value : 'unavailable';
+    recordFeedbackEvent({ stage: 'input:capture', status: result });
+    return result;
   }
   async insert(text: string, original: boolean): Promise<WriteResult> {
     const command = original ? 'insert' : 'current';
     const value = await this.ask(command + ' ' + Buffer.from(text, 'utf16le').toString('hex'));
-    return value === 'written' || value === 'moved' || value === 'partial' || value === 'paste-unconfirmed' ? value : 'unavailable';
+    const result = value === 'written' || value === 'moved' || value === 'partial' || value === 'paste-unconfirmed' ? value : 'unavailable';
+    recordFeedbackEvent({ stage: 'input:' + command, status: result });
+    return result;
   }
   clear(): void { if (this.child) void this.ask('clear'); }
 

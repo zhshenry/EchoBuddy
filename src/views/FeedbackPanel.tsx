@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import { feedbackStatus, feedbackSummary, type FeedbackBridge, type FeedbackDelivery, type FeedbackMode, type FeedbackRecord } from '../../shared/feedback';
+import { feedbackStatus, feedbackSummary, feedbackMessageParts, type FeedbackBridge, type FeedbackDelivery, type FeedbackMode, type FeedbackRecord } from '../../shared/feedback';
 
 
 export function FeedbackPanel({ api, product, context = 'settings-about' }: { api: FeedbackBridge; product: string; context?: string }) {
@@ -106,7 +106,10 @@ export function FeedbackPanel({ api, product, context = 'settings-about' }: { ap
       {routing}
       <p className="feedback-description">{preview.payload.description}</p>
       <dl><div><dt>产品版本</dt><dd>{product} · {preview.payload.appVersion}</dd></div><div><dt>反馈编号</dt><dd>{preview.payload.feedbackId}</dd></div></dl>
-      {welink && <details className="feedback-diagnostics"><summary>查看将发给维护人的摘要</summary><pre className="feedback-summary">{feedbackSummary(preview.payload, delivery!.receiver)}</pre></details>}
+      {welink && <details className="feedback-diagnostics"><summary>查看将发给维护人的摘要</summary>
+        <p className="feedback-muted">含最近异常与关键操作，最多分两条发送。以下内容已脱敏。</p>
+        {feedbackMessageParts(feedbackSummary(preview.payload, delivery!.receiver)).map((part, index) => <pre key={index} className="feedback-summary">{part}</pre>)}
+      </details>}
       <details className="feedback-diagnostics"><summary>查看将附带的诊断</summary><pre>{JSON.stringify(preview.payload.diagnostics, null, 2)}</pre></details>
       <p className="feedback-muted">内容仅供维护人员查看。请检查描述和诊断中是否还包含不希望发送的信息。</p>
       {preview.error && <p role="alert" className="feedback-error">{preview.error}</p>}

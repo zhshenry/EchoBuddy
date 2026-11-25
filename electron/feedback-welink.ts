@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { delimiter, join } from 'node:path';
 import { stripVTControlCharacters } from 'node:util';
+import { feedbackMessageParts } from '../shared/feedback';
 
 export function resolveFeedbackCli(roots: string[], env = process.env): string | undefined {
   const paths = [...roots.map(root => join(root, 'welink', 'welink-cli.exe')),
@@ -15,7 +16,7 @@ const run: Runner = (exe, args, timeout) => new Promise(resolve => {
   execFile(exe, args, { windowsHide: true, timeout, maxBuffer: 256 * 1024 }, (error, stdout, stderr) =>
     resolve({ code: error?.code ?? (error ? null : 0), stdout: String(stdout), stderr: String(stderr) }));
 });
-export type WelinkResult = { state: 'sent' | 'failed' | 'unknown'; error?: string };
+export type WelinkResult = { state: 'sent' | 'failed' | 'unknown'; error?: string; sentParts?: number; totalParts?: number };
 export class FeedbackWelink {
   constructor(private readonly executable: () => string | undefined, private readonly runner: Runner = run) {}
   available(): boolean { return !!this.executable(); }
@@ -33,8 +34,17 @@ export class FeedbackWelink {
   async send(receiver: string, summary: string): Promise<WelinkResult> {
     const exe = this.executable();
     if (!exe) return { state: 'failed', error: '未找到 WeLink 命令行工具，请复制摘要后手动发送。' };
+    const parts = feedbackMessageParts(summary);
+    for (let index = 0; index < parts.length; index++) {
+      const result = await this.sendPart(exe, receiver, parts[index]);
+      if (result.state !== 'sent') return { ...result, sentParts: index, totalParts: parts.length,
+        ...(index ? { state: 'unknown', error: `已确认发送 ${index}/${parts.length} 条摘要，第 ${index + 1} 条${result.state === 'failed' ? '未被接收' : '是否送达未知'}。请在 WeLink 核对，已停止自动重发。` } : {}) };
+    }
+    return { state: 'sent', sentParts: parts.length, totalParts: parts.length };
+  }
+  private async sendPart(exe: string, receiver: string, text: string): Promise<WelinkResult> {
     try {
-      const result = await this.runner(exe, ['im', 'send-to-user', '--receiver', receiver, '--text', summary], 30000);
+      const result = await this.runner(exe, ['im', 'send-to-user', '--receiver', receiver, '--text', text], 30000);
       if (result.code !== 0) {
         if (/sign\/nonce\/timestamp|用户未登录|cannot connect to WeLink PC|not allow to send messages to self|proxy failed/i.test(result.stdout + result.stderr))
           return { state: 'failed', error: 'WeLink 未接收摘要，请确认客户端和命令行登录的是同一个账号，或手动发送给维护人。' };

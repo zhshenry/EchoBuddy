@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from '
 import { join } from 'node:path';
 import { arch, platform, release } from 'node:os';
 import { feedbackEvents, feedbackSummary, redactFeedback, type FeedbackEvent, type FeedbackProduct, type FeedbackRecord } from '../shared/feedback';
-import type { FeedbackWelink } from './feedback-welink';
+import type { FeedbackWelink, WelinkResult } from './feedback-welink';
 
 export const FEEDBACK_ORIGIN = 'https://139.224.232.131';
 const validId = (value: unknown): value is string => typeof value === 'string' && /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(value);
@@ -88,10 +88,12 @@ export class FeedbackService {
       if (error) { record.handoff!.error = error; return this.save(record); }
       record.handoff!.state = 'sending'; record.handoff!.error = undefined;
       this.save(record);
-      const result = await welink.send(receiver, this.summary(id, receiver)).catch(() => ({ state: 'unknown' as const }));
+      const result: WelinkResult = await welink.send(receiver, this.summary(id, receiver)).catch(() => ({ state: 'unknown' }));
       record = structuredClone(this.get(id));
       record.handoff!.state = result.state === 'sent' ? 'sent' : result.state === 'failed' ? 'saved' : 'unconfirmed';
-      record.handoff!.error = result.state === 'unknown' ? '摘要是否送达尚未确认。为避免重复，未自动重发，请在 WeLink 核对。' : 'error' in result ? result.error : undefined;
+      record.handoff!.sentParts = result.sentParts;
+      record.handoff!.totalParts = result.totalParts;
+      record.handoff!.error = result.error ?? (result.state === 'unknown' ? '摘要是否送达尚未确认。为避免重复，未自动重发，请在 WeLink 核对。' : undefined);
       return this.save(record);
     });
   }

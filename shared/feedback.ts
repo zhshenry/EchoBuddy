@@ -25,7 +25,7 @@ export type FeedbackRecord = {
   progress?: 'received' | 'in-progress' | 'waiting-release' | 'resolved' | 'closed';
   fixVersion?: string;
   error?: string;
-  handoff?: { state: 'saved' | 'sending' | 'sent' | 'unconfirmed'; receiver: string; packagePath: string; error?: string };
+  handoff?: { state: 'saved' | 'sending' | 'sent' | 'unconfirmed'; receiver: string; packagePath: string; error?: string; sentParts?: number; totalParts?: number };
 };
 export interface FeedbackBridge {
   prepare(description: string, page: string): Promise<FeedbackRecord>;
@@ -41,6 +41,7 @@ export interface FeedbackBridge {
 export function feedbackStatus(record: FeedbackRecord): string {
   if (record.status === 'local' && record.handoff) {
     if (record.handoff.state === 'sent') return '摘要已发送，反馈包待转交';
+    if (record.handoff.sentParts && record.handoff.totalParts) return `已确认发送 ${record.handoff.sentParts}/${record.handoff.totalParts} 条摘要，请核对`;
     if (record.handoff.state === 'sending' || record.handoff.state === 'unconfirmed') return '摘要送达未确认，反馈包已保留';
     return '反馈包已保存，待转交';
   }
@@ -78,9 +79,54 @@ export function feedbackEvents(events: FeedbackEvent[]): FeedbackEvent[] {
     return result;
   });
 }
+const feedbackStages: Record<string, string> = {
+  'dictation:start': '开始听写', 'dictation:stop': '停止听写', 'dictation:complete': '听写结束',
+  'dictation:insert-pending': '补写文字', 'dictation:copy': '复制转写',
+  'input:capture': '检测输入位置', 'input:insert': '自动写入', 'input:current': '写入当前光标',
+  'speech:transcribe': '语音识别', 'speech:meeting': '会议转写', 'speech:embedding': '提取声纹', 'speech:speakers': '区分说话人',
+  'meeting:stop': '保存会议', 'meeting:retry': '重新转写会议', 'meeting:delete': '删除会议', 'meeting:rename': '会议改名',
+  'renderer-process': '设置页面进程', 'child-process': '后台进程',
+};
+const feedbackResults: Record<string, string> = {
+  captured: '找到输入位置', 'paste-on-stop': '停录后粘贴', written: '已写入', moved: '输入位置变化',
+  partial: '可能部分写入', 'paste-unconfirmed': '粘贴结果未确认', unavailable: '目标不可用',
+  completed: '完成', failed: '失败', retained: '转写已保留', empty: '未识别到语音',
+  sentence: '整句写入', streaming: '流式输入', requested: '已请求',
+};
+function feedbackClip(text: string, limit: number): string {
+  return text.length > limit ? text.slice(0, limit - 1).replace(/[\uD800-\uDBFF]$/, '') + '…' : text;
+}
 export function feedbackSummary(payload: FeedbackPayload, receiver: string): string {
-  const text = `EchoBuddy 问题反馈\n编号：${payload.feedbackId}\n版本：${payload.appVersion}\n系统：${payload.diagnostics.platform} ${payload.diagnostics.osVersion} ${payload.diagnostics.arch}\n\n${payload.description}`;
+  const head = `EchoBuddy 问题反馈\n编号：${payload.feedbackId}\n版本：${payload.appVersion}\n系统：${payload.diagnostics.platform} ${payload.diagnostics.osVersion} ${payload.diagnostics.arch}`;
   const suffix = `\n\n完整诊断已保存为 ${payload.product}-feedback-${payload.feedbackId}.json，请将下载文件夹中的反馈包发给维护人 ${receiver}。`;
-  const limit = 1450 - suffix.length;
-  return (text.length > limit ? text.slice(0, limit - 1).replace(/[\uD800-\uDBFF]$/, '') + '…' : text) + suffix;
+  const seen = new Set<string>(), errors: string[] = [], actions: string[] = [];
+  // Only use the already previewed, sanitized event snapshot; never reread live logs here.
+  for (const event of [...payload.diagnostics.events].reverse()) {
+    const stage = event.stage ?? '', status = event.status ?? '', code = event.errorCode ?? '';
+    const failure = /fail|error|timeout|unavailable|partial|unconfirmed|moved|crash|oom/i.test(status) || !!code && code !== '0';
+    if (!failure && !feedbackStages[stage]) continue;
+    if (!failure && (stage === 'child-process' || stage === 'renderer-process')) continue;
+    const signature = [stage, status, code].join('\n');
+    if (seen.has(signature)) continue;
+    seen.add(signature);
+    const clock = event.time?.match(/T(\d{2}:\d{2}:\d{2})/)?.[1];
+    const line = feedbackClip([clock && `${clock} UTC`, feedbackStages[stage] ?? stage, feedbackResults[status] ?? status, code].filter(Boolean).join(' · ').replace(/[\r\n\t]+/g, ' '), 220);
+    const list = failure ? errors : actions;
+    if (list.length < (failure ? 6 : 4)) list.push(line);
+  }
+  const diagnostics = (errors.length ? '\n\n最近异常（新的在前）\n' + errors.join('\n') : '')
+    + (actions.length ? '\n\n关键操作（新的在前）\n' + actions.join('\n') : '');
+  // Reserve space for the user's description, then prefer recent failures over routine actions.
+  const description = feedbackClip(payload.description, Math.max(200, 2800 - head.length - suffix.length - Math.min(diagnostics.length, 900) - 2));
+  const text = head + '\n\n' + description;
+  const room = Math.max(0, 2800 - text.length - suffix.length);
+  return text + (room > 40 ? feedbackClip(diagnostics, room) : '') + suffix;
+}
+export function feedbackMessageParts(summary: string): string[] {
+  if (summary.length <= 1450) return [summary];
+  const text = feedbackClip(summary, 2800);
+  let cut = text.lastIndexOf('\n', 1440);
+  if (cut < text.length - 1440) cut = 1440;
+  if (/[\uD800-\uDBFF]/.test(text[cut - 1])) cut--;
+  return [`（1/2）${text.slice(0, cut)}`, `（2/2）${text.slice(cut)}`];
 }

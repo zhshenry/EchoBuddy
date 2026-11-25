@@ -5,6 +5,7 @@ import { validateSpeechWave } from '../../shared/speech-audio';
 import type { SpeechLanguage } from '../../shared/speech-contracts';
 import type { SpeakerLine } from '../../shared/speaker-contracts';
 import type { MeetingChunk, SpeechOperation, WorkerResult } from './worker-contract';
+import { recordFeedbackEvent } from '../feedback-service';
 
 type WorkerMessage = { type: 'ready' } | { type: 'error'; id?: string; message: string } |
   { type: 'result'; id: string; result: WorkerResult };
@@ -66,7 +67,10 @@ export class SpeechEngine {
         this.child!.postMessage({ ...operation, id, audio });
       });
     });
-    this.queue = next.catch(() => {});
+    this.queue = next.catch(error => {
+      if (sessionId === this.activeId) recordFeedbackEvent({ stage: 'speech:' + operation.type, status: 'failed', operationId: sessionId,
+        errorCode: /超时|timeout|timed out/i.test(String(error)) ? 'SPEECH_TIMEOUT' : 'SPEECH_OPERATION_FAILED' });
+    });
     return next;
   }
 

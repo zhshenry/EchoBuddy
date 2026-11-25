@@ -6,7 +6,9 @@ import { join } from 'node:path';
 import { FeedbackNetwork, COMPANY_PROBE, FEEDBACK_MAINTAINER } from '../electron/feedback-network';
 import { FeedbackWelink } from '../electron/feedback-welink';
 import { FeedbackService } from '../electron/feedback-service';
-import { feedbackStatus, feedbackSummary } from '../shared/feedback';
+import { feedbackStatus, feedbackSummary, feedbackMessageParts } from '../shared/feedback';
+import { WindowsInput } from '../electron/windows-input';
+import { Dictation } from '../electron/dictation';
 
 function directory(t: { after(fn: () => void): void }) {
   const path = mkdtempSync(join(tmpdir(), 'feedback-delivery-'));
@@ -80,7 +82,7 @@ test('WeLink needs an explicit success receipt and never executes a shell comman
     assert.equal((await client.send(FEEDBACK_MAINTAINER, 'text $() & "test"')).state, expected);
   }
   const timedOut = new FeedbackWelink(() => 'fake.exe', async () => { throw new Error('timeout with secret'); });
-  assert.deepEqual(await timedOut.send(FEEDBACK_MAINTAINER, 'test'), { state: 'unknown' });
+  assert.deepEqual(await timedOut.send(FEEDBACK_MAINTAINER, 'test'), { state: 'unknown', sentParts: 0, totalParts: 1 });
 });
 test('intranet saves the original sanitized package before sending exactly the previewed summary', async t => {
   const path = directory(t), service = new FeedbackService(path, 'echobuddy', '0.2.7', noCloud);
@@ -128,12 +130,83 @@ test('saving for manual WeLink delivery never marks sent; later cloud import can
   const last = await service.refresh(id);
   assert.equal(feedbackStatus(last), '处理中'); assert.match(last.error!, /无法查询处理状态/);
 });
-test('a long summary stays in one bounded IM while preserving feedback id, recipient and original package', t => {
+test('a long summary stays in two bounded IMs while preserving feedback id, recipient and original package', t => {
   const service = new FeedbackService(directory(t), 'echobuddy', 'test', noCloud);
   const record = service.prepare('😀'.repeat(1900), 'test');
   const summary = feedbackSummary(record.payload, FEEDBACK_MAINTAINER);
-  assert.ok(Array.from(summary).length <= 1450);
-  assert.ok(summary.length <= 1450);
+  assert.ok(summary.length <= 2800);
+  const parts = feedbackMessageParts(summary);
+  assert.equal(parts.length, 2);
+  assert.ok(parts.every(part => part.length <= 1450 && Buffer.from(part, 'utf8').toString('utf8') === part));
+  assert.equal(parts.map(part => part.slice(5)).join(''), summary);
   assert.ok(summary.includes(record.payload.feedbackId)); assert.ok(summary.includes('z00545972'));
   assert.equal(record.payload.description.length, 3800);
+});
+test('summary prefers recent distinct failures over routine events, preserves description and sanitizes diagnostics before preview', t => {
+  const service = new FeedbackService(directory(t), 'echobuddy', 'test', noCloud);
+  service.record({ stage: 'input:insert', status: 'paste-unconfirmed' });
+  service.record({ stage: 'speech:transcribe', status: 'failed', errorCode: 'password=private-diagnostic' });
+  service.record({ stage: 'input:current', status: 'written' });
+  service.record({ stage: 'input:current', status: 'written' });
+  service.record({ stage: 'message-round', status: 'completed' });
+  service.record({ stage: 'child-process', status: 'killed', errorCode: '0' });
+  const record = service.prepare('我点了补写，但自动写入没有生效。', 'settings-feedback');
+  const frozen = service.payload(record.payload.feedbackId);
+  service.record({ stage: 'speech:transcribe', status: 'failed', errorCode: 'LATER_ERROR_MUST_NOT_APPEAR' });
+  const summary = feedbackSummary(record.payload, FEEDBACK_MAINTAINER);
+  assert.match(summary, /我点了补写/);
+  assert.match(summary, /最近异常/); assert.match(summary, /自动写入 · 粘贴结果未确认/);
+  assert.match(summary, /语音识别 · 失败/); assert.match(summary, /关键操作/);
+  assert.equal(summary.match(/写入当前光标/g)?.length, 1);
+  assert.ok(summary.indexOf('语音识别 · 失败') < summary.indexOf('自动写入 · 粘贴结果未确认'));
+  for (const value of ['private-diagnostic', 'message-round', '后台进程', 'LATER_ERROR_MUST_NOT_APPEAR']) assert.ok(!summary.includes(value));
+  assert.equal(service.payload(record.payload.feedbackId), frozen);
+});
+test('a long description leaves room for recent failures and still respects every message limit', t => {
+  const service = new FeedbackService(directory(t), 'echobuddy', 'test', noCloud);
+  for (let i = 0; i < 20; i++) service.record({ stage: 'input:insert', status: 'paste-unconfirmed', errorCode: String(i) });
+  const record = service.prepare('😀'.repeat(1900), 'test');
+  const summary = feedbackSummary(record.payload, FEEDBACK_MAINTAINER);
+  assert.match(summary, /最近异常/); assert.ok(summary.length <= 2800);
+  assert.ok(feedbackMessageParts(summary).every(part => part.length <= 1450 && Buffer.from(part, 'utf8').toString('utf8') === part));
+  const legacy = { ...record.payload, diagnostics: { ...record.payload.diagnostics, events: [] } };
+  assert.ok(!feedbackSummary(legacy, FEEDBACK_MAINTAINER).includes('最近异常'));
+});
+test('split delivery sends exactly previewed numbered parts and partial failures cannot repeat the first message after restart', async t => {
+  for (const second of ['failed', 'unknown', 'sent'] as const) {
+    const path = directory(t), service = new FeedbackService(path, 'echobuddy', 'test', noCloud);
+    const record = service.prepare('用于分段发送的描述。'.repeat(200), 'test'), id = record.payload.feedbackId;
+    const sent: string[] = [];
+    const client = new FeedbackWelink(() => 'fake.exe', async (_exe, args) => {
+      if (args[0] === 'auth') return { code: 0, stdout: 'Status: authenticated', stderr: '' };
+      sent.push(args.at(-1)!);
+      if (sent.length === 2 && second === 'unknown') throw new Error('response lost');
+      return { code: 0, stdout: JSON.stringify({ code: sent.length === 2 && second === 'failed' ? 403 : 0 }), stderr: '' };
+    });
+    const result = await service.handoff(id, join(path, 'downloads'), FEEDBACK_MAINTAINER, client);
+    assert.deepEqual(sent, feedbackMessageParts(feedbackSummary(record.payload, FEEDBACK_MAINTAINER)));
+    assert.equal(result.handoff?.state, second === 'sent' ? 'sent' : 'unconfirmed');
+    assert.equal(result.handoff?.sentParts, second === 'sent' ? 2 : 1); assert.equal(result.handoff?.totalParts, 2);
+    if (second !== 'sent') { assert.match(result.handoff!.error!, /已确认发送 1\/2/); assert.match(feedbackStatus(result), /1\/2/); }
+    const restarted = new FeedbackService(path, 'echobuddy', 'test', noCloud);
+    await restarted.handoff(id, join(path, 'downloads'), FEEDBACK_MAINTAINER, client);
+    assert.equal(sent.length, 2);
+  }
+});
+test('input outcomes and dictation lifecycle enter diagnostics without recording transcript or clipboard content', async t => {
+  const service = new FeedbackService(directory(t), 'echobuddy', 'test', noCloud), input = new WindowsInput('unused');
+  const responses = ['paste-on-stop', 'paste-unconfirmed', 'written'];
+  (input as unknown as { ask(command: string): Promise<string> }).ask = async () => responses.shift()!;
+  assert.equal(await input.capture(), 'paste-on-stop');
+  assert.equal(await input.insert('private-transcript-text', true), 'paste-unconfirmed');
+  assert.equal(await input.insert('private-transcript-text', false), 'written');
+  const dictation = new Dictation({ begin() {}, end() {}, transcribe: async () => '' },
+    { capture: async () => 'captured', insert: async () => 'written', clear() {} }, () => {}, () => {});
+  dictation.toggle(); const id = dictation.snapshot().sessionId!;
+  dictation.recording(id); dictation.toggle(); await dictation.complete(id, 'private-transcript-text');
+  const record = service.prepare('测试写入诊断', 'test'), json = service.payload(record.payload.feedbackId);
+  for (const stage of ['input:capture', 'input:insert', 'input:current', 'dictation:start', 'dictation:stop', 'dictation:complete'])
+    assert.ok(record.payload.diagnostics.events.some(event => event.stage === stage), stage);
+  assert.ok(!json.includes('private-transcript-text'));
+  assert.match(feedbackSummary(record.payload, FEEDBACK_MAINTAINER), /粘贴结果未确认/);
 });

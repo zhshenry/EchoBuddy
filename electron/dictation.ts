@@ -3,6 +3,7 @@ import { SHORT_DICTATION_MAX_SECONDS, type DictationState, type WriteTiming } fr
 import type { Hotword } from '../shared/hotwords';
 import type { SpeechEngine } from './speech/engine';
 import type { CaptureResult, WindowsInput, WriteResult } from './windows-input';
+import { recordFeedbackEvent } from './feedback-service';
 
 type Streaming = { written: string; writes: Promise<void>; failure?: Exclude<WriteResult, 'written'> };
 type Session = { id: string; target: Promise<CaptureResult>; completing: boolean; hotwords: readonly Hotword[]; stopTimer?: NodeJS.Timeout; stream?: Streaming };
@@ -26,11 +27,13 @@ export class Dictation {
     if (this.state.phase === 'finishing' || this.writing) return;
     if (this.session) {
       clearTimeout(this.session.stopTimer);
+      recordFeedbackEvent({ stage: 'dictation:stop', status: 'requested', operationId: this.session.id });
       this.set({ phase: 'finishing' });
       return;
     }
     const id = randomUUID();
     const streaming = timing === 'streaming';
+    recordFeedbackEvent({ stage: 'dictation:start', status: timing, operationId: id });
     this.session = {
       id, target: this.input.capture(shortcut, streaming).catch(() => 'unavailable' as const), completing: false,
       hotwords: structuredClone(hotwords),
@@ -108,6 +111,8 @@ export class Dictation {
       pending = text;
       message = '无法写入原光标，转写已保留。';
     } finally {
+      recordFeedbackEvent({ stage: 'dictation:complete', status: error ? 'failed' : pending ? 'retained' : text ? 'completed' : 'empty',
+        ...(error ? { errorCode: 'DICTATION_FAILED' } : {}), operationId: id });
       this.engine.end(id);
       this.input.clear();
       this.session = undefined;
