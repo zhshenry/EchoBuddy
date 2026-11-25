@@ -74,6 +74,23 @@ test('feedback network capsules wrap inside the settings content width', () => {
   assert.match(note, /overflow-wrap:\s*anywhere/);
 });
 
+test('feedback image attachments wrap inside the settings content width', () => {
+  for (const selector of ['.settings-content .feedback-attachments', '.settings-content .feedback-attachment-head', '.settings-content .feedback-thumbs', '.settings-content .feedback-thumb', '.settings-content .feedback-image-note']) {
+    const body = rule(selector);
+    assert.match(body, /min-width:\s*0/);
+    assert.match(body, /max-width:\s*100%/);
+  }
+  assert.match(rule('.settings-content .feedback-attachment-head'), /flex-wrap:\s*wrap/);
+  assert.match(rule('.settings-content .feedback-attachment-head > span'), /overflow-wrap:\s*anywhere/);
+  assert.match(rule('.settings-content .feedback-thumbs'), /display:\s*flex/);
+  assert.match(rule('.settings-content .feedback-thumbs'), /flex-wrap:\s*wrap/);
+  assert.match(rule('.settings-content .feedback-thumb'), /flex:\s*0 1 72px/);
+  assert.match(rule('.settings-content .feedback-thumb img'), /max-width:\s*100%/);
+  assert.match(rule('.settings-content .feedback-thumb figcaption'), /text-overflow:\s*ellipsis/);
+  assert.match(rule('.settings-content .feedback-attachment-files'), /overflow-wrap:\s*anywhere/);
+  assert.match(rule('.settings-content .feedback-image-note'), /overflow-wrap:\s*anywhere/);
+});
+
 test('narrow settings windows only tighten content padding', () => {
   const narrow = css.match(/@media \(max-width:\s*480px\)\s*\{(.*)\}\s*$/)?.[1] ?? '';
   assert.match(narrow, /\.settings-layout\s*\{[^}]*grid-template-columns:\s*120px minmax\(0,\s*1fr\)/);

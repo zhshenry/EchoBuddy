@@ -50,6 +50,32 @@
 .feedback-panel .feedback-error, .feedback-panel .feedback-notice { margin-top: 12px; line-height: 1.5; }
 .feedback-error { color: var(--danger-ink, var(--danger, #b9253b)); }
 .feedback-notice { color: var(--ink-2, var(--muted)); }
+.feedback-attachments {
+  min-width: 0; max-width: 100%; margin-top: 12px; padding: 12px;
+  border: 1px dashed var(--hairline, var(--line)); border-radius: 10px; background: var(--settings-card-bg, #fafafb);
+}
+.feedback-attachment-head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; min-width: 0; max-width: 100%; }
+.feedback-attachment-head > span { min-width: 0; max-width: 100%; overflow-wrap: anywhere; font-weight: 600; }
+.feedback-attachment-head button { flex: 0 1 auto; max-width: 100%; }
+.feedback-thumbs { display: flex; flex-wrap: wrap; gap: 10px; min-width: 0; max-width: 100%; margin-top: 10px; }
+.feedback-thumb { position: relative; flex: 0 1 72px; width: 72px; max-width: 100%; min-width: 0; margin: 0; }
+.feedback-thumb img, .feedback-thumb-pending {
+  display: block; width: 100%; height: 72px; object-fit: cover; border-radius: 8px; background: #eceff1;
+}
+.feedback-thumb figcaption {
+  margin-top: 4px; overflow: hidden; color: var(--ink-2, var(--muted)); font-size: 11px; line-height: 1.35;
+  text-align: center; white-space: nowrap; text-overflow: ellipsis;
+}
+.feedback-thumb-remove {
+  position: absolute; top: 4px; right: 4px; z-index: 1; display: grid; place-items: center;
+  width: 18px; height: 18px; min-height: 18px; padding: 0; border: 0; border-radius: 50%;
+  background: #4b5160; color: white; font-size: 12px; line-height: 1;
+}
+.feedback-attachment-files { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
+.feedback-image-note {
+  min-width: 0; max-width: 100%; margin-top: 8px; padding: 8px 10px; overflow-wrap: anywhere;
+  border-radius: 8px; background: #f3f4f4; color: var(--ink); line-height: 1.5;
+}
 .feedback-history { margin-top: 24px; border-top: 1px solid var(--hairline, var(--line)); }
 .feedback-history ul { margin: 0; padding: 0; list-style: none; }
 .feedback-history li + li { border-top: 1px solid var(--hairline, var(--line)); }

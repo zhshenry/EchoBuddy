@@ -69,6 +69,7 @@ test('the feedback page shows capsules under the method controls and keeps the c
     api: {
       prepare: async () => { throw new Error('unused'); },
       list: async () => [],
+      images: async () => [],
       delivery: async () => { throw new Error('unused'); },
       setMode: async () => { throw new Error('unused'); },
       send: async () => { throw new Error('unused'); },

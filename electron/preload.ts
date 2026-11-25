@@ -9,8 +9,9 @@ function listen<T>(channel: string, callback: (value: T) => void): () => void {
 
 const bridge: DesktopBridge = {
   feedback: {
-    prepare: (description, page) => ipcRenderer.invoke('feedback:prepare', description, page),
-    list: () => ipcRenderer.invoke('feedback:list'), send: (id, channel) => ipcRenderer.invoke('feedback:send', id, channel),
+    prepare: (description, page, images) => ipcRenderer.invoke('feedback:prepare', description, page, images),
+    list: () => ipcRenderer.invoke('feedback:list'), images: id => ipcRenderer.invoke('feedback:images', id),
+    send: (id, channel) => ipcRenderer.invoke('feedback:send', id, channel),
     delivery: force => ipcRenderer.invoke('feedback:delivery', force), setMode: mode => ipcRenderer.invoke('feedback:setMode', mode),
     copyWelink: id => ipcRenderer.invoke('feedback:copyWelink', id),
     refresh: id => ipcRenderer.invoke('feedback:refresh', id), export: id => ipcRenderer.invoke('feedback:export', id),

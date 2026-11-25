@@ -622,6 +622,20 @@ input.voiceprint-name { flex: 0 1 15rem; max-width: 15rem; }
 .settings-content .feedback-network-note {
   min-width: 0; max-width: 100%; overflow-wrap: anywhere; color: var(--muted); font-size: var(--secondary-text-size);
 }
+.settings-content .feedback-attachments { min-width: 0; max-width: 100%; }
+.settings-content .feedback-attachment-head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; min-width: 0; max-width: 100%; }
+.settings-content .feedback-attachment-head > span { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
+.settings-content .feedback-attachment-head button { flex: 0 1 auto; max-width: 100%; white-space: normal; background: #f3f4f4; color: var(--muted); }
+.settings-content .feedback-thumbs { display: flex; flex-wrap: wrap; gap: 10px; min-width: 0; max-width: 100%; }
+.settings-content .feedback-thumb { position: relative; flex: 0 1 72px; width: 72px; max-width: 100%; min-width: 0; }
+.settings-content .feedback-thumb img { display: block; width: 100%; max-width: 100%; height: 72px; object-fit: cover; }
+.settings-content .feedback-thumb-pending { display: block; width: 100%; max-width: 100%; height: 72px; }
+.settings-content .feedback-thumb figcaption { overflow: hidden; max-width: 100%; white-space: nowrap; text-overflow: ellipsis; }
+.settings-content .feedback-panel .feedback-thumb-remove {
+  position: absolute; top: 4px; right: 4px; width: 18px; height: 18px; min-height: 18px; max-width: 100%; padding: 0; background: #4b5160; color: white;
+}
+.settings-content .feedback-attachment-files { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
+.settings-content .feedback-image-note { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
 .settings-content :is(.feedback-limit, .feedback-status) {
   color: var(--muted); font-size: var(--secondary-text-size); line-height: var(--body-line-height);
 }
