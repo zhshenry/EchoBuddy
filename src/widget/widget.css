@@ -364,7 +364,18 @@ kbd {
 .settings-sidebar button[aria-current="page"]::before {
   content: ''; position: absolute; inset: 4px auto 4px 0; width: 3px; border-radius: 2px; background: var(--accent);
 }
-.settings-content { min-width: 0; min-height: 0; overflow: auto; padding: 12px 24px 16px; }
+.settings-content {
+  min-width: 0; min-height: 0; overflow-x: hidden; overflow-y: auto; scrollbar-gutter: stable;
+  overflow-wrap: anywhere; padding: 12px 24px 16px;
+}
+.settings-content :is(.key-button, .keys, .update .row, .hotword-list > li, .hotword-controls, .speaker-heading, .speaker-actions) {
+  flex-wrap: wrap; min-width: 0; max-width: 100%;
+}
+.settings-content :is(.update-action, .release-link, .hotword-controls button, .key-button) {
+  max-width: 100%; white-space: normal;
+}
+.settings-content .figures { grid-template-columns: repeat(auto-fit, minmax(32px, 1fr)); }
+.settings-content .swatches { grid-template-columns: repeat(auto-fit, minmax(16px, 1fr)); }
 .settings-section { padding: 12px 0 13px; }
 .settings-section + .settings-section { border-top: 1px solid var(--line); }
 .settings-section :is(h2, h3) { margin: 0 0 9px; }
@@ -571,9 +582,9 @@ input.voiceprint-name { flex: 0 1 15rem; max-width: 15rem; }
 .settings-content .feedback-heading label { margin: 0; font: inherit; cursor: text; }
 .settings-content .feedback-heading h2:focus { outline: none; }
 .settings-content .feedback-routing { margin: 16px 0; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
-.settings-content .feedback-route-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.settings-content .feedback-route-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-width: 0; max-width: 100%; }
 .settings-content .feedback-route-controls label { margin: 0 auto 0 0; font-size: var(--control-text-size); font-weight: var(--semibold); }
-.settings-content .feedback-route-controls select { min-width: 112px; min-height: var(--control-height); padding: 0 8px; border: 1px solid var(--line); border-radius: 7px; color: var(--ink); background: #f3f4f4; font: inherit; font-size: var(--control-text-size); }
+.settings-content .feedback-route-controls select { min-width: min(112px, 100%); max-width: 100%; min-height: var(--control-height); padding: 0 8px; border: 1px solid var(--line); border-radius: 7px; color: var(--ink); background: #f3f4f4; font: inherit; font-size: var(--control-text-size); }
 .settings-content .feedback-route-controls button { color: var(--muted); background: #f3f4f4; }
 .settings-content :is(.feedback-limit, .feedback-status) {
   color: var(--muted); font-size: var(--secondary-text-size); line-height: var(--body-line-height);
@@ -586,30 +597,35 @@ input.voiceprint-name { flex: 0 1 15rem; max-width: 15rem; }
   display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-top: 8px;
 }
 .settings-content .feedback-compose-footer .feedback-muted { flex: 1; min-width: min(100%, 240px); margin: 0; }
-.settings-content .feedback-compose-footer .feedback-actions { flex: none; margin-top: 0; }
+.settings-content .feedback-compose-footer .feedback-actions { flex: 0 1 auto; min-width: 0; max-width: 100%; margin-top: 0; }
 .settings-content .feedback-panel button {
   min-height: var(--control-height); padding: 0 12px; border: 0; border-radius: 7px;
   font-size: var(--control-text-size); line-height: var(--compact-line-height);
 }
-.settings-content .feedback-actions button { background: #f3f4f4; color: var(--muted); }
+.settings-content .feedback-actions { min-width: 0; max-width: 100%; }
+.settings-content .feedback-actions button { max-width: 100%; white-space: normal; background: #f3f4f4; color: var(--muted); }
 .settings-content .feedback-actions button:hover:not(:disabled) { background: var(--tint); color: var(--acc-deep); }
 .settings-content .feedback-actions button.feedback-primary {
-  min-width: 96px; background: var(--tint); color: var(--acc-deep); font-weight: var(--semibold);
+  min-width: min(96px, 100%); background: var(--tint); color: var(--acc-deep); font-weight: var(--semibold);
 }
 .settings-content .feedback-actions button.feedback-primary:hover:not(:disabled) { background: var(--tint); filter: none; }
 .settings-content .feedback-panel button:active:not(:disabled) { transform: none; }
 .settings-content .feedback-panel button:disabled { color: var(--muted); opacity: 1; }
-.settings-content .feedback-preview { padding: 0; border: 0; border-radius: 0; background: transparent; }
-.settings-content .feedback-preview button.feedback-primary { min-width: 120px; }
+.settings-content .feedback-preview { min-width: 0; max-width: 100%; padding: 0; border: 0; border-radius: 0; background: transparent; }
+.settings-content .feedback-preview button.feedback-primary { min-width: min(120px, 100%); max-width: 100%; }
 .settings-content .feedback-description {
   min-height: 72px; padding: 9px 10px; border: 1px solid var(--line); border-radius: 7px;
   background: #fafafb; font-size: var(--control-text-size); line-height: var(--body-line-height);
 }
-.settings-content .feedback-panel dl { margin: 12px 0; border: 1px solid var(--line); border-radius: 8px; }
-.settings-content .feedback-panel dl > div { margin: 0; padding: 9px 10px; font-size: var(--secondary-text-size); }
+.settings-content .feedback-panel dl { min-width: 0; max-width: 100%; margin: 12px 0; border: 1px solid var(--line); border-radius: 8px; }
+.settings-content .feedback-panel dl > div { min-width: 0; flex-wrap: wrap; margin: 0; padding: 9px 10px; font-size: var(--secondary-text-size); }
+.settings-content .feedback-panel dd { min-width: 0; overflow-wrap: anywhere; }
 .settings-content .feedback-panel dl > div + div { border-top: 1px solid var(--line); }
 .settings-content .feedback-diagnostics summary { color: var(--muted); font-size: var(--secondary-text-size); }
-.settings-content .feedback-panel pre { margin: 4px 0 12px; padding: 9px 10px; border-radius: 7px; background: #fafafb; }
+.settings-content .feedback-panel pre {
+  min-width: 0; max-width: 100%; margin: 4px 0 12px; padding: 9px 10px; overflow-x: hidden; overflow-y: auto;
+  border-radius: 7px; background: #fafafb; white-space: pre-wrap; overflow-wrap: anywhere;
+}
 .settings-content .feedback-panel pre.feedback-summary { font-family: inherit; line-height: var(--body-line-height); }
 .settings-content .feedback-history { margin-top: 16px; }
 .settings-content .feedback-history > summary {
