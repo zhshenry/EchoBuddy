@@ -11,6 +11,10 @@ export type FeedbackDelivery = {
   cliAvailable: boolean;
 };
 export type FeedbackEvent = { time?: string; stage?: string; status?: string; errorCode?: string; messageId?: string; operationId?: string; toolCallId?: string; tool?: string; selectedItemIds?: string[]; targetId?: string; itemId?: string };
+export type FeedbackImageType = 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif';
+export type FeedbackAttachment = { name: string; label: string; type: FeedbackImageType; bytes: number };
+export type FeedbackImageUpload = { key?: string; name: string; source: 'file' | 'paste'; data: Uint8Array };
+export type FeedbackImageContent = FeedbackAttachment & { data: Uint8Array };
 export interface FeedbackPayload {
   feedbackId: string;
   product: FeedbackProduct;
@@ -25,11 +29,16 @@ export type FeedbackRecord = {
   progress?: 'received' | 'in-progress' | 'waiting-release' | 'resolved' | 'closed';
   fixVersion?: string;
   error?: string;
+  attachments?: FeedbackAttachment[];
   handoff?: { state: 'saved' | 'sending' | 'sent' | 'unconfirmed'; receiver: string; packagePath: string; error?: string; sentParts?: number; totalParts?: number };
 };
+export function feedbackPackageFilename(product: string, feedbackId: string, imageCount: number): string {
+  return `${product}-feedback-${feedbackId}.${imageCount ? 'zip' : 'json'}`;
+}
 export interface FeedbackBridge {
-  prepare(description: string, page: string): Promise<FeedbackRecord>;
+  prepare(description: string, page: string, images?: FeedbackImageUpload[]): Promise<FeedbackRecord>;
   list(): Promise<FeedbackRecord[]>;
+  images(id: string): Promise<FeedbackImageContent[]>;
   delivery(force?: boolean): Promise<FeedbackDelivery>;
   setMode(mode: FeedbackMode): Promise<FeedbackDelivery>;
   send(id: string, channel: FeedbackChannel): Promise<FeedbackRecord>;
@@ -105,9 +114,14 @@ const feedbackResults: Record<string, string> = {
 function feedbackClip(text: string, limit: number): string {
   return text.length > limit ? text.slice(0, limit - 1).replace(/[\uD800-\uDBFF]$/, '') + '…' : text;
 }
-export function feedbackSummary(payload: FeedbackPayload, receiver: string): string {
+export function feedbackSummary(payload: FeedbackPayload, receiver: string, attachments: readonly { name: string }[] = []): string {
   const head = `EchoBuddy 问题反馈\n编号：${payload.feedbackId}\n版本：${payload.appVersion}\n系统：${payload.diagnostics.platform} ${payload.diagnostics.osVersion} ${payload.diagnostics.arch}`;
-  const suffix = `\n\n完整诊断已保存为 ${payload.product}-feedback-${payload.feedbackId}.json，请将下载文件夹中的反馈包发给维护人 ${receiver}。`;
+  const packageName = feedbackPackageFilename(payload.product, payload.feedbackId, attachments.length);
+  const listed = attachments.map(item => item.name.replace(/[\r\n\t]+/g, ' ')).join('、');
+  const names = listed.length > 180 ? listed.slice(0, 179).replace(/[\uD800-\uDBFF]$/u, '') + '…' : listed;
+  const suffix = attachments.length
+    ? `\n\n图片附件 ${attachments.length} 张：${names}。完整图片只在反馈包内。\n\n完整诊断和图片已保存为 ${packageName}，请将下载文件夹中的反馈包发给维护人 ${receiver}。`
+    : `\n\n完整诊断已保存为 ${packageName}，请将下载文件夹中的反馈包发给维护人 ${receiver}。`;
   const seen = new Set<string>(), errors: string[] = [], actions: string[] = [];
   // Only use the already previewed, sanitized event snapshot; never reread live logs here.
   for (const event of [...payload.diagnostics.events].reverse()) {

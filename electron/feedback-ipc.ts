@@ -16,8 +16,9 @@ export function registerFeedbackIpc(product: FeedbackProduct, contents: () => We
   const getService = () => service ??= new FeedbackService(directory, product, app.getVersion(), request);
   try { getService(); } catch { /* A damaged feedback file must not prevent the application from starting. */ }
   const methods = {
-    prepare: (description: string, page: string) => getService().prepare(description, page),
+    prepare: (description: string, page: string, images?: unknown) => getService().prepare(description, page, images),
     list: () => getService().list(),
+    images: (id: string) => getService().images(id),
     delivery: (force = false) => network.read(force === true),
     setMode: (mode: unknown) => network.setMode(mode),
     send: async (id: string, channel: FeedbackChannel) => {
@@ -43,10 +44,10 @@ export function registerFeedbackIpc(product: FeedbackProduct, contents: () => We
       return { record, opened };
     },
     export: async (id: string) => {
-      const payload = getService().payload(id);
-      const result = await dialog.showSaveDialog({ title: '保存反馈包', defaultPath: join(app.getPath('downloads'), `${product}-feedback-${id}.json`), filters: [{ name: '反馈包', extensions: ['json'] }] });
+      const file = getService().packageFile(id);
+      const result = await dialog.showSaveDialog({ title: '保存反馈包', defaultPath: join(app.getPath('downloads'), file.name), filters: [{ name: '反馈包', extensions: [file.name.endsWith('.zip') ? 'zip' : 'json'] }] });
       if (result.canceled || !result.filePath) return false;
-      await writeFile(result.filePath, payload, { mode: 0o600 });
+      await writeFile(result.filePath, file.data, { mode: 0o600 });
       return true;
     },
   };
