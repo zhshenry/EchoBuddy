@@ -1,5 +1,5 @@
 {
-  "id": "sensevoice-int8-v1",
+  "id": "sensevoice-zipformer-int8-v2",
   "runtime": "sherpa-onnx-node@1.13.8",
   "files": [
     {
@@ -31,6 +31,36 @@
       "bytes": 5992913,
       "sha256": "220ad67ca923bef2fa91f2390c786097bf305bceb5e261d4af67b38e938e1079",
       "url": "https://huggingface.co/csukuangfj/sherpa-onnx-pyannote-segmentation-3-0/resolve/9403a6902bb58e3d5ae8c7e77c3422de279db2e0/model.onnx"
+    },
+    {
+      "name": "hotwords-encoder.int8.onnx",
+      "bytes": 181895032,
+      "sha256": "8fa764187a261844f859d7143ebaa563af5d10adfece4c18a8f414c88cba2a9b",
+      "url": "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/resolve/98590b7ed6443e77b714204da2757d75e1a642f4/encoder-epoch-99-avg-1.int8.onnx"
+    },
+    {
+      "name": "hotwords-decoder.int8.onnx",
+      "bytes": 13091040,
+      "sha256": "1a70c593d71e53f023f5f55b0b4cfff5055abb786ee3992e5f63dc2e273cc4fa",
+      "url": "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/resolve/98590b7ed6443e77b714204da2757d75e1a642f4/decoder-epoch-99-avg-1.int8.onnx"
+    },
+    {
+      "name": "hotwords-joiner.int8.onnx",
+      "bytes": 3228404,
+      "sha256": "1ed689c5ed19dbaa725d9d191bb4822b5f4855a39e1ffd28cbc1f340d25b2ee0",
+      "url": "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/resolve/98590b7ed6443e77b714204da2757d75e1a642f4/joiner-epoch-99-avg-1.int8.onnx"
+    },
+    {
+      "name": "hotwords-tokens.txt",
+      "bytes": 56317,
+      "sha256": "a8e0e4ec53810e433789b54a5c0134a7eaa2ffca595a6334d54c00da858841d3",
+      "url": "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/resolve/98590b7ed6443e77b714204da2757d75e1a642f4/tokens.txt"
+    },
+    {
+      "name": "hotwords-bpe.vocab",
+      "bytes": 12564,
+      "sha256": "d0b642f3a2eacd5fadefdeff9e0e1358cab729647cbb7fe58cf738e1f7407029",
+      "url": "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/resolve/98590b7ed6443e77b714204da2757d75e1a642f4/bpe.vocab"
     }
   ]
 }

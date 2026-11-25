@@ -1,6 +1,6 @@
 # Bundled offline dictation components
 
-EchoBuddy uses SenseVoiceSmall INT8 ONNX, Silero VAD, CAM++, pyannote segmentation 3.0, and sherpa-onnx-node 1.13.8.
+EchoBuddy uses SenseVoiceSmall INT8 ONNX, bilingual Zipformer INT8 ONNX, Silero VAD, CAM++, pyannote segmentation 3.0, and sherpa-onnx-node 1.13.8.
 The original model names, authors and separate license texts are retained here.
 
 - SenseVoiceSmall: Alibaba Group / FunAudioLLM (QwenAudio).
@@ -22,6 +22,8 @@ The original model names, authors and separate license texts are retained here.
   https://huggingface.co/csukuangfj/sherpa-onnx-pyannote-segmentation-3-0
 - sherpa-onnx: next-gen Kaldi team, Apache-2.0.
   https://github.com/k2-fsa/sherpa-onnx/tree/v1.13.8
+- The bilingual Chinese-English Zipformer Transducer export by csukuangfj / next-gen Kaldi uses Apache-2.0. The full text is in sherpa-onnx-Apache-2.0.txt.
+  https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/tree/98590b7ed6443e77b714204da2757d75e1a642f4
 - ONNX Runtime: Microsoft, MIT.
   The Windows native package reports ONNX Runtime 1.28.2.
   https://github.com/microsoft/onnxruntime

@@ -8,6 +8,14 @@ function listen<T>(channel: string, callback: (value: T) => void): () => void {
 }
 
 const bridge: DesktopBridge = {
+  feedback: {
+    prepare: (description, page) => ipcRenderer.invoke('feedback:prepare', description, page),
+    list: () => ipcRenderer.invoke('feedback:list'), send: (id, channel) => ipcRenderer.invoke('feedback:send', id, channel),
+    delivery: force => ipcRenderer.invoke('feedback:delivery', force), setMode: mode => ipcRenderer.invoke('feedback:setMode', mode),
+    copyWelink: id => ipcRenderer.invoke('feedback:copyWelink', id),
+    refresh: id => ipcRenderer.invoke('feedback:refresh', id), export: id => ipcRenderer.invoke('feedback:export', id),
+    copy: id => ipcRenderer.invoke('feedback:copy', id),
+  },
   snapshot: () => ipcRenderer.invoke('desktop:snapshot'),
   toggle: () => ipcRenderer.invoke('dictation:toggle'),
   recording: id => ipcRenderer.invoke('dictation:recording', id),
@@ -38,6 +46,9 @@ const bridge: DesktopBridge = {
   settingsDestination: () => ipcRenderer.invoke('settings:destination'),
   minimizeSettings: () => ipcRenderer.invoke('settings:minimize'),
   closeSettings: () => ipcRenderer.invoke('settings:close'),
+  hotwords: () => ipcRenderer.invoke('hotwords:list'),
+  saveHotword: (word, previous) => ipcRenderer.invoke('hotwords:save', word, previous),
+  deleteHotword: text => ipcRenderer.invoke('hotwords:delete', text),
   voiceprints: () => ipcRenderer.invoke('speaker:profiles'),
   renameVoiceprint: (id, name) => ipcRenderer.invoke('speaker:rename', id, name),
   beginSpeakerCapture: (mode, target) => ipcRenderer.invoke('speaker:begin', mode, target),

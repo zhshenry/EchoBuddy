@@ -2,10 +2,11 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { isBotAvatar } from '../shared/bot-avatar';
 import { AVAILABLE_RECORDING_MODES, DEFAULT_SHORTCUTS, DOCK_SIDES, type DockPlacement, type Preferences } from '../shared/desktop';
+import { normalizeHotword, type Hotword } from '../shared/hotwords';
 import { meetingSources } from '../shared/meeting-contracts';
 import { RECOGNITION_LANGUAGES } from '../shared/speech-contracts';
 
-export type SavedPreferences = Omit<Preferences, 'shortcutActive'> & { position?: { x: number; y: number }; dock?: DockPlacement };
+export type SavedPreferences = Omit<Preferences, 'shortcutActive'> & { hotwords: Hotword[]; position?: { x: number; y: number }; dock?: DockPlacement };
 const shortcutModifiers = ['Ctrl', 'Alt', 'Shift', 'Win'];
 
 export function normalizeShortcut(value: unknown): string | undefined {
@@ -20,7 +21,7 @@ export function normalizeShortcut(value: unknown): string | undefined {
 export function loadPreferences(path: string): SavedPreferences {
   const defaults: SavedPreferences = {
     avatar: 'drop:coral', shortcuts: { ...DEFAULT_SHORTCUTS }, recordingMode: 'dictation', writeTiming: 'sentence', languages: [...RECOGNITION_LANGUAGES],
-    dockOnEdge: true, meetingSources: ['microphone'],
+    dockOnEdge: true, meetingSources: ['microphone'], hotwords: [],
   };
   try {
     const saved = JSON.parse(readFileSync(path, 'utf8'));
@@ -43,6 +44,7 @@ export function loadPreferences(path: string): SavedPreferences {
       meetingSources: meetingSources(saved.meetingSources),
       dockOnEdge,
       languages: languages.length ? languages : defaults.languages,
+      hotwords: Array.isArray(saved.hotwords) ? (saved.hotwords as unknown[]).map(normalizeHotword).filter(word => word !== null) : [],
       position: position && Number.isInteger(position.x) && Number.isInteger(position.y) ? position : undefined,
       ...(dockOnEdge && dock && DOCK_SIDES.includes(dock.side) && Number.isInteger(dock.displayId) &&
         Number.isFinite(dock.offset) && dock.offset >= 0 && dock.offset <= 1

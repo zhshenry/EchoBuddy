@@ -5,9 +5,11 @@ import { createReadStream } from 'node:fs';
 import { readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { MeetingRecognition } from '../../shared/meeting-contracts';
+import type { Hotword } from '../../shared/hotwords';
 import { decodeSpeechWave, validateSpeechWave } from '../../shared/speech-audio';
 import { VOICEPRINT_MIN_VOICE_SECONDS } from '../../shared/speaker-contracts';
 import { SPEECH_SAMPLE_RATE as rate } from '../../shared/speech-contracts';
+import { applyHotwords, hotwordSpelling } from './hotwords';
 import {
   buildSpeakerSpans, cosine, labelSpeakerGroups, meetingSpeakerForUtterance, minimumMeetingVoiceSamples,
   normalizeVoiceprint, type DiarizedSegment, type SpeakerSpan,
@@ -19,9 +21,20 @@ const directory = process.argv[2];
 const minimumVoice = VOICEPRINT_MIN_VOICE_SECONDS * rate;
 const embeddingModel = 'speaker-embedding.onnx';
 const segmentationModel = 'speaker-segmentation.onnx';
+const hotwordAssets = {
+  encoder: 'hotwords-encoder.int8.onnx', decoder: 'hotwords-decoder.int8.onnx', joiner: 'hotwords-joiner.int8.onnx',
+  tokens: 'hotwords-tokens.txt', vocab: 'hotwords-bpe.vocab',
+};
 const ms = (sample: number) => Math.round(sample / rate * 1000);
 type TimedSpeech = { start: number; end: number };
 type Recognition = { text: string; lang?: string; emotion?: string; event?: string; tokens?: string[]; timestamps?: number[] };
+type OnlineStream = { acceptWaveform(wave: { sampleRate: number; samples: Float32Array }): void; inputFinished(): void };
+type OnlineRecognizer = {
+  createStream(): OnlineStream;
+  isReady(stream: OnlineStream): boolean;
+  decode(stream: OnlineStream): void;
+  getResult(stream: OnlineStream): { text: string };
+};
 
 async function initialize(): Promise<void> {
   const manifest = JSON.parse(await readFile(join(directory, 'manifest.json'), 'utf8')) as { files: { name: string; bytes: number; sha256: string }[] };
@@ -67,6 +80,51 @@ async function initialize(): Promise<void> {
     return recognizer.getResult(stream);
   }
   const recognize = (samples: Float32Array) => decode(samples).text.trim();
+
+  let hotwordRecognizer: { words: string; model?: OnlineRecognizer } | undefined;
+  let verifiedHotwordAssets: Promise<void> | undefined;
+  const hotwordTail = new Float32Array(rate * 0.6);
+  async function prepareHotwords(hotwords: readonly Hotword[]): Promise<OnlineRecognizer | undefined> {
+    const words = [...new Set(hotwords.map(word => hotwordSpelling(word.text)).filter(Boolean))].join('\n');
+    if (!words) return;
+    if (hotwordRecognizer?.words === words) return hotwordRecognizer.model;
+    hotwordRecognizer = { words };
+    try {
+      await (verifiedHotwordAssets ??= Promise.all(Object.values(hotwordAssets).map(verifyAsset)).then(() => {}));
+      hotwordRecognizer.model = new sherpa.OnlineRecognizer({
+        featConfig: config.featConfig,
+        modelConfig: {
+          transducer: {
+            encoder: join(directory, hotwordAssets.encoder), decoder: join(directory, hotwordAssets.decoder), joiner: join(directory, hotwordAssets.joiner),
+          },
+          tokens: join(directory, hotwordAssets.tokens), bpeVocab: join(directory, hotwordAssets.vocab), modelingUnit: 'cjkchar+bpe',
+          numThreads: 2, provider: 'cpu', debug: 0,
+        },
+        decodingMethod: 'modified_beam_search', maxActivePaths: 4, enableEndpoint: false, hotwordsScore: 3,
+        hotwordsBuf: words, hotwordsBufSize: Buffer.byteLength(words),
+      });
+    } catch {
+      // Dictation can still use the bundled SenseVoice model and the user's exact spellings.
+    }
+    return hotwordRecognizer.model;
+  }
+
+  function recognizeWithHotwords(samples: Float32Array, hotwords: readonly Hotword[], model?: OnlineRecognizer): string {
+    const original = recognize(samples);
+    if (!original || !hotwords.length) return original;
+    let biased = '';
+    if (model) {
+      try {
+        const stream = model.createStream();
+        stream.acceptWaveform({ sampleRate: rate, samples });
+        stream.acceptWaveform({ sampleRate: rate, samples: hotwordTail });
+        stream.inputFinished();
+        while (model.isReady(stream)) model.decode(stream);
+        biased = model.getResult(stream).text;
+      } catch { /* Keep the original text available if the hotword pass fails. */ }
+    }
+    return applyHotwords(original, biased, hotwords);
+  }
 
   const embeddingConfig = { model: join(directory, embeddingModel), numThreads: 2, provider: 'cpu', debug: 0 };
   let extractor: {
@@ -213,8 +271,11 @@ async function initialize(): Promise<void> {
         } else if (data.type === 'meeting') {
           result = { type: 'meeting', chunk: await analyzeMeeting(samples) };
         } else {
+          const hotwords = data.hotwords ?? [];
+          const model = hotwords.length ? await prepareHotwords(hotwords) : undefined;
           const texts: string[] = [];
-          voiced(samples, (start, clip) => texts.push(recognize(texts.length ? clip : samples.subarray(Math.max(0, start - 4800), start + clip.length))));
+          voiced(samples, (start, clip) => texts.push(recognizeWithHotwords(
+            texts.length ? clip : samples.subarray(Math.max(0, start - 4800), start + clip.length), hotwords, model)));
           result = { type: 'transcribe', result: { text: texts.filter(Boolean).join(' ').trim(), audioSeconds, inferenceSeconds: (performance.now() - started) / 1000 } };
         }
       }

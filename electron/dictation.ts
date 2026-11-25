@@ -1,13 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import { SHORT_DICTATION_MAX_SECONDS, type DictationState, type WriteTiming } from '../shared/desktop';
+import type { Hotword } from '../shared/hotwords';
 import type { SpeechEngine } from './speech/engine';
 import type { CaptureResult, WindowsInput, WriteResult } from './windows-input';
 
 type Streaming = { written: string; writes: Promise<void>; failure?: Exclude<WriteResult, 'written'> };
-type Session = { id: string; target: Promise<CaptureResult>; completing: boolean; stopTimer?: NodeJS.Timeout; stream?: Streaming };
+type Session = { id: string; target: Promise<CaptureResult>; completing: boolean; hotwords: readonly Hotword[]; stopTimer?: NodeJS.Timeout; stream?: Streaming };
 
 export class Dictation {
-  private state: DictationState = { phase: 'idle', sessionId: null, recordingStartedAt: null, pending: '', message: '', reveal: 0, clearRevision: 0 };
+  private state: DictationState = { phase: 'idle', sessionId: null, recordingStartedAt: null, hotwordsActive: false, pending: '', message: '', reveal: 0, clearRevision: 0 };
   private session?: Session;
   private writing = false;
 
@@ -21,7 +22,7 @@ export class Dictation {
   snapshot(): DictationState { return this.state; }
   blocksInstall(): boolean { return this.state.phase !== 'idle' || this.writing || !!this.state.pending; }
 
-  toggle(shortcut?: string, timing: WriteTiming = 'sentence'): void {
+  toggle(shortcut?: string, timing: WriteTiming = 'sentence', hotwords: readonly Hotword[] = []): void {
     if (this.state.phase === 'finishing' || this.writing) return;
     if (this.session) {
       clearTimeout(this.session.stopTimer);
@@ -32,10 +33,11 @@ export class Dictation {
     const streaming = timing === 'streaming';
     this.session = {
       id, target: this.input.capture(shortcut, streaming).catch(() => 'unavailable' as const), completing: false,
+      hotwords: structuredClone(hotwords),
       stream: streaming ? { written: '', writes: Promise.resolve() } : undefined,
     };
     this.engine.begin(id);
-    this.set({ sessionId: id, phase: 'preparing', pending: '', message: '' });
+    this.set({ sessionId: id, phase: 'preparing', hotwordsActive: hotwords.length > 0, pending: '', message: '' });
   }
 
   recording(id: string): void {
@@ -50,7 +52,7 @@ export class Dictation {
 
   transcribe(id: string, audio: Uint8Array): Promise<string> {
     if (id !== this.session?.id || this.session.completing) return Promise.reject(new Error('本次听写已结束。'));
-    return this.engine.transcribe(id, audio);
+    return this.engine.transcribe(id, audio, this.session.hotwords);
   }
 
   writeProgress(id: string, text: string): Promise<void> | undefined {
@@ -109,7 +111,7 @@ export class Dictation {
       this.engine.end(id);
       this.input.clear();
       this.session = undefined;
-      this.set({ phase: 'idle', sessionId: null, recordingStartedAt: null, pending, message, reveal: this.state.reveal + Number(!!pending) });
+      this.set({ phase: 'idle', sessionId: null, recordingStartedAt: null, hotwordsActive: false, pending, message, reveal: this.state.reveal + Number(!!pending) });
     }
   }
 

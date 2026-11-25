@@ -1,3 +1,4 @@
+import './views/feedback.css';
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type PointerEvent, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { CaretDown, CaretLeft, CaretRight, ChatCircleDots, Circle, GearSix, Microphone, Stop, X } from '@phosphor-icons/react';
@@ -8,7 +9,7 @@ import { RECOGNITION_LANGUAGES } from '../shared/speech-contracts';
 import { BotAvatar } from './avatars/BotAvatar';
 import { useCapture } from './audio/useCapture';
 import { SettingsWindow } from './widget/SettingsWindow';
-import { LanguagePanel, LanguageSelector, MeetingSourceOptions, RecordingOptions, WriteOptions } from './widget/SpeechOptions';
+import { LanguagePanel, MeetingSourceOptions, RecordingOptions, WriteOptions } from './widget/SpeechOptions';
 import { UpdateNotice, UpdateSettings } from './widget/UpdateSettings';
 import './avatars/avatar.css';
 import './widget/widget.css';
@@ -16,7 +17,7 @@ import './widget/meeting.css';
 
 const desktop = window.echoBuddy;
 const initial: DesktopSnapshot = {
-  dictation: { phase: 'idle', sessionId: null, recordingStartedAt: null, pending: '', message: '', reveal: 0, clearRevision: 0 },
+  dictation: { phase: 'idle', sessionId: null, recordingStartedAt: null, hotwordsActive: false, pending: '', message: '', reveal: 0, clearRevision: 0 },
   meeting: initialMeetingCapture,
   preferences: {
     avatar: 'drop:coral', shortcuts: { ...DEFAULT_SHORTCUTS }, shortcutActive: { dictation: true, meeting: true },
@@ -46,7 +47,6 @@ function DockClock({ startedAt }: { startedAt: number }) {
 
 function App({ dictation, meeting: capture, preferences, update, dock }: DesktopSnapshot) {
   const [pane, setPane] = useState<Pane>(null);
-  const [languagesOpen, setLanguagesOpen] = useState(false);
   const [writingPending, setWritingPending] = useState(false);
   const [dismissed, setDismissed] = useState('');
   const shell = useRef<HTMLElement>(null);
@@ -123,7 +123,6 @@ function App({ dictation, meeting: capture, preferences, update, dock }: Desktop
     previousClearRevision.current = clearRevision;
     if (meeting && !pending && !cleared) setPane(previous => previous === 'transcript' ? null : previous);
   }, [meeting, pending, clearRevision]);
-  useEffect(() => desktop.onLanguagePanel(setLanguagesOpen), []);
   useEffect(() => {
     if (pane === 'transcript' && liveText.current) liveText.current.scrollTop = liveText.current.scrollHeight;
   }, [pane, lines, draft]);
@@ -134,7 +133,6 @@ function App({ dictation, meeting: capture, preferences, update, dock }: Desktop
   }, [message, pending]);
 
   function togglePane(value: Exclude<Pane, null>) {
-    if (languagesOpen) void desktop.closeLanguagePanel();
     setPane(old => old === value ? null : value);
   }
   function beginDockPress(event: PointerEvent<HTMLElement>) {
@@ -167,12 +165,11 @@ function App({ dictation, meeting: capture, preferences, update, dock }: Desktop
     function keydown(event: KeyboardEvent) {
       if (event.key !== 'Escape' || !pane) return;
       event.preventDefault();
-      if (languagesOpen) void desktop.closeLanguagePanel();
-      else setPane(null);
+      setPane(null);
     }
     window.addEventListener('keydown', keydown);
     return () => window.removeEventListener('keydown', keydown);
-  }, [languagesOpen, pane]);
+  }, [pane]);
 
   const label = phase === 'preparing' ? '取消准备'
     : recording ? (meeting ? '停止会议录音' : '结束录音并写入')
@@ -212,10 +209,7 @@ function App({ dictation, meeting: capture, preferences, update, dock }: Desktop
       {recordButton(true)}
     </section> : null;
   const expandedBar = compact && !motion ? null : <section className="shell" ref={shell}
-    aria-label={meeting ? 'EchoBuddy 会议录音浮窗' : 'EchoBuddy 听写浮窗'} data-phase={phase} inert={compact}
-    onPointerDown={event => {
-      if (languagesOpen && event.target instanceof Element && !event.target.closest('.language-selector')) void desktop.closeLanguagePanel();
-    }}>
+    aria-label={meeting ? 'EchoBuddy 会议录音浮窗' : 'EchoBuddy 听写浮窗'} data-phase={phase} inert={compact}>
     <div className="bar">
       <div className="tools">
         {avatar}
@@ -243,7 +237,7 @@ function App({ dictation, meeting: capture, preferences, update, dock }: Desktop
       {recordButton(false)}
     </div>
     <PanelTransition id="settings-panel" open={pane === 'settings'}>
-      <div className="panel inline-settings" onScroll={() => { if (languagesOpen) void desktop.closeLanguagePanel(); }}>
+      <div className="panel inline-settings">
         <div className="row inline-settings-heading">
           <h2>设置</h2>
           <button type="button" className="more-settings-button" title="打开更多设置" onClick={() => {
@@ -268,8 +262,13 @@ function App({ dictation, meeting: capture, preferences, update, dock }: Desktop
           </div>
         </section>
         <section className="settings-section settings-inline-row">
-          <h3>识别语言</h3>
-          <LanguageSelector languages={preferences.languages} open={languagesOpen} />
+          <h3>问题反馈</h3>
+          <button type="button" className="inline-feedback-button" onClick={() => {
+            setPane(null);
+            void desktop.openSettings('feedback');
+          }}>
+            前往反馈
+          </button>
         </section>
         <UpdateSettings update={update} blocked={updateBlocked} />
       </div>

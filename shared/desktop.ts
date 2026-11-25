@@ -1,3 +1,4 @@
+import type { Hotword, HotwordChange } from './hotwords';
 import type { RecognitionLanguage } from './speech-contracts';
 import type { SpeakerCapture, SpeakerCaptureResult, VoiceprintEnrollment, VoiceprintId, VoiceprintProfile } from './speaker-contracts';
 
@@ -8,6 +9,7 @@ export interface DictationState {
   phase: DictationPhase;
   sessionId: string | null;
   recordingStartedAt: number | null;
+  hotwordsActive: boolean;
   pending: string;
   message: string;
   reveal: number;
@@ -29,7 +31,7 @@ export type OverlayDock = {
   layout: { compact: DockBounds; expanded: DockBounds };
   motion?: number;
 } | null;
-export type SettingsPage = 'voice' | 'appearance' | 'shortcuts' | 'updates' | 'meetings';
+export type SettingsPage = 'voice' | 'appearance' | 'shortcuts' | 'updates' | 'meetings' | 'feedback';
 
 export interface SettingsDestination {
   page: SettingsPage;
@@ -37,7 +39,7 @@ export interface SettingsDestination {
 }
 
 export function resolveSettingsPage(value: unknown): SettingsPage {
-  return value === 'appearance' || value === 'shortcuts' || value === 'updates' || value === 'meetings' ? value : 'voice';
+  return value === 'feedback' ? value : value === 'appearance' || value === 'shortcuts' || value === 'updates' || value === 'meetings' ? value : 'voice';
 }
 
 export interface Preferences {
@@ -72,6 +74,7 @@ export type OverlayPointer = { x: number; y: number } | null;
 export type LanguagePanelAnchor = { left: number; right: number; top: number; bottom: number };
 
 export interface DesktopBridge {
+  feedback: import('./feedback').FeedbackBridge;
   snapshot(): Promise<DesktopSnapshot>;
   toggle(): Promise<void>;
   recording(id: string): Promise<void>;
@@ -103,6 +106,9 @@ export interface DesktopBridge {
   settingsDestination(): Promise<SettingsDestination>;
   minimizeSettings(): Promise<void>;
   closeSettings(): Promise<void>;
+  hotwords(): Promise<Hotword[]>;
+  saveHotword(word: Hotword, previous?: string): Promise<HotwordChange>;
+  deleteHotword(text: string): Promise<HotwordChange>;
   voiceprints(): Promise<VoiceprintProfile[]>;
   renameVoiceprint(id: VoiceprintId, name: string): Promise<VoiceprintProfile[]>;
   beginSpeakerCapture(mode: SpeakerCapture, target?: VoiceprintEnrollment): Promise<string | null>;

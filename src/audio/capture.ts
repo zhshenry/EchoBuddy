@@ -44,7 +44,7 @@ export class Capture {
   private lines: string[] = [];
   private draft = '';
 
-  constructor(private readonly id: string, private readonly events: Events) {}
+  constructor(private readonly id: string, private readonly events: Events, private readonly writeDrafts = true) {}
 
   start(): Promise<void> { return this.microphone.start(); }
 
@@ -81,14 +81,14 @@ export class Capture {
       this.commit();
       return;
     }
-    const draftInterval = this.events.progress ? 0.7 : 1.65;
+    const progress = this.writeDrafts ? this.events.progress : undefined;
+    const draftInterval = progress ? 0.7 : 1.65;
     if (!this.closed && this.hasVoice && !this.draftInFlight && this.length - this.lastDraft >= rate * draftInterval) {
       this.lastDraft = this.length;
       const segment = this.segment;
       this.draftInFlight = true;
       void this.recognize(this.frames, this.length).then(async text => {
         if (!this.closed && segment === this.segment && text) {
-          const progress = this.events.progress;
           const stable = progress ? stableDraftPrefix(this.draft, text) : '';
           this.draft = text;
           this.events.words(this.confirmed(), text);

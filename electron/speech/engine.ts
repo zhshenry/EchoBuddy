@@ -1,5 +1,6 @@
 import { utilityProcess, type UtilityProcess } from 'electron';
 import { join } from 'node:path';
+import type { Hotword } from '../../shared/hotwords';
 import { validateSpeechWave } from '../../shared/speech-audio';
 import type { SpeechLanguage } from '../../shared/speech-contracts';
 import type { SpeakerLine } from '../../shared/speaker-contracts';
@@ -28,8 +29,8 @@ export class SpeechEngine {
     void Promise.resolve().then(() => this.load()).catch(() => {});
   }
 
-  async transcribe(sessionId: string, audio: Uint8Array): Promise<string> {
-    const result = await this.request(sessionId, audio, { type: 'transcribe', language: 'auto' });
+  async transcribe(sessionId: string, audio: Uint8Array, hotwords: readonly Hotword[]): Promise<string> {
+    const result = await this.request(sessionId, audio, { type: 'transcribe', language: 'auto', hotwords });
     if (result.type !== 'transcribe') throw new Error('本地转写失败，请重试。');
     return result.result.text;
   }

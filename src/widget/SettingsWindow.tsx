@@ -4,11 +4,13 @@ import { botAvatarChoice, botAvatarColors } from '../../shared/bot-avatar';
 import { AVAILABLE_RECORDING_MODES, RECORDING_MODE_NAMES, resolveSettingsPage, type DesktopSnapshot, type RecordingMode, type SettingsDestination } from '../../shared/desktop';
 import { BotAvatar } from '../avatars/BotAvatar';
 import { AvatarPicker } from './AvatarPicker';
+import { HotwordSettings } from './HotwordSettings';
 import { MeetingRecords } from './MeetingRecords';
 import { LanguageSelector, WriteOptions } from './SpeechOptions';
 import { refreshSettingsDragRegion } from './settings-drag-region';
 import { SpeakerSettings } from './SpeakerSettings';
 import { UpdateSettings } from './UpdateSettings';
+import { FeedbackPanel } from '../views/FeedbackPanel';
 
 const pages = [
   { id: 'voice', label: '语音', icon: Microphone },
@@ -16,6 +18,7 @@ const pages = [
   { id: 'appearance', label: '个性化', icon: Palette },
   { id: 'shortcuts', label: '快捷键', icon: Keyboard },
   { id: 'updates', label: '版本更新', icon: ArrowsClockwise },
+  { id: 'feedback', label: '问题反馈', icon: PencilSimple },
 ] as const;
 
 function combination(event: KeyboardEvent): string {
@@ -114,7 +117,8 @@ export function SettingsWindow({ dictation, meeting, preferences, update }: Desk
       </nav>
       {page === 'meetings' &&
         <MeetingRecords selected={meetingId} onSelect={id => setDestination(previous => ({ ...previous, meetingId: id }))} />}
-      {page !== 'meetings' && <div className="settings-content" onScroll={() => { if (languagesOpen) void desktop.closeLanguagePanel(); }}>
+      {page !== 'meetings' && <div className="settings-content" key={page} onScroll={() => { if (languagesOpen) void desktop.closeLanguagePanel(); }}>
+        {page === 'feedback' && <FeedbackPanel api={desktop.feedback} product="EchoBuddy" context="settings-feedback" />}
         {page === 'voice' && <>
           <section className="settings-section settings-inline-row" style={voiceTheme}>
             <h2>写入时机</h2>
@@ -125,18 +129,11 @@ export function SettingsWindow({ dictation, meeting, preferences, update }: Desk
             <LanguageSelector languages={preferences.languages} open={languagesOpen} />
           </section>
           <SpeakerSettings busy={busy} />
-          <section className="settings-section">
-            <h2>自定义热词</h2>
-            <div className="hotword-controls">
-              <input type="text" aria-label="输入词语" placeholder="输入词语" disabled />
-              <button type="button" disabled>添加</button>
-            </div>
-            <p className="settings-note">热词识别待接入。</p>
-          </section>
+          <HotwordSettings languages={preferences.languages} />
         </>}
         {page === 'appearance' && <>
           <AvatarPicker avatar={preferences.avatar} />
-          <section className="settings-section dock-preference">
+          <section className="settings-section">
             <div className="row">
               <h2 id="dock-preference-title">贴边自动收起</h2>
               <div className="switch" role="group" aria-labelledby="dock-preference-title">

@@ -6,17 +6,42 @@ import { Dictation } from '../electron/dictation';
 import { AppUpdates } from '../electron/updater';
 import type { CaptureResult, WriteResult } from '../electron/windows-input';
 import { Capture, stableDraftPrefix } from '../src/audio/capture';
+import type { Hotword } from '../shared/hotwords';
 
 function setup(capture: (shortcut?: string) => Promise<CaptureResult> = async () => 'captured') {
   const writes: [string, boolean][] = [], clipboard: string[] = [], calls: string[] = [];
+  const vocabularies: (readonly Hotword[])[] = [];
   let answer: WriteResult | Promise<WriteResult> = 'written';
   const controller = new Dictation(
-    { begin: id => { calls.push(id); }, transcribe: async () => '测试', end: id => { calls.push(id); } },
+    {
+      begin: id => { calls.push(id); },
+      transcribe: async (_id, _audio, hotwords) => { vocabularies.push(hotwords); return '测试'; },
+      end: id => { calls.push(id); },
+    },
     { capture, clear() {}, async insert(text, original) { writes.push([text, original]); return answer; } },
     () => {}, text => clipboard.push(text),
   );
-  return { controller, writes, clipboard, calls, next: (result: WriteResult | Promise<WriteResult>) => { answer = result; } };
+  return { controller, writes, clipboard, calls, vocabularies, next: (result: WriteResult | Promise<WriteResult>) => { answer = result; } };
 }
+
+test('dictation keeps one hotword snapshot across draft and final recognition until the next session', async () => {
+  const { controller, vocabularies } = setup();
+  const words = [{ text: 'OnoSan', aliases: ['欧诺桑'] }];
+  const audio = new Uint8Array();
+  controller.toggle(undefined, 'streaming', words);
+  const first = controller.snapshot().sessionId!;
+  controller.recording(first);
+  await controller.transcribe(first, audio);
+  words[0].aliases.push('欧诺森');
+  controller.toggle(undefined, 'streaming', words);
+  await controller.transcribe(first, audio);
+  await controller.complete(first, '测试');
+  controller.toggle(undefined, 'sentence', words);
+  const second = controller.snapshot().sessionId!;
+  const text = await controller.transcribe(second, audio);
+  await controller.complete(second, text);
+  assert.deepEqual(vocabularies.map(vocabulary => vocabulary[0].aliases), [['欧诺桑'], ['欧诺桑'], ['欧诺桑', '欧诺森']]);
+});
 
 test('starting audio does not wait for either the original caret or the speech worker', async () => {
   let targetReady!: (result: CaptureResult) => void;
@@ -43,6 +68,29 @@ test('starting audio does not wait for either the original caret or the speech w
   assert.deepEqual(writes, [['开头已经录到。', true]]);
   assert.deepEqual(calls, [id, id]);
   assert.equal(controller.blocksInstall(), false);
+});
+
+test('streaming with hotwords shows drafts and writes the corrected phrase after a pause', async t => {
+  const drafts: string[] = [], progress: string[] = [];
+  const capture = new Capture('session', {
+    level() {}, words: (_lines, draft) => drafts.push(draft), ended() {}, progress: lines => progress.push(lines.join('')),
+  }, false);
+  const audio = capture as unknown as {
+    accept(frame: Float32Array): void;
+    recognize(frames: Float32Array[], length: number): Promise<string>;
+  };
+  t.mock.method(audio, 'recognize', async (_frames: Float32Array[], length: number) => length < 70_000
+    ? '我们请卢志新来开会' : '我们请陆志鑫来开会。');
+  const speech = new Float32Array(1024).fill(0.1);
+  for (let i = 0; i < 62; i++) {
+    audio.accept(speech);
+    await new Promise<void>(resolve => setImmediate(resolve));
+  }
+  assert.ok(drafts.includes('我们请卢志新来开会'));
+  assert.deepEqual(progress, []);
+  for (let i = 0; i < 10; i++) audio.accept(new Float32Array(1024));
+  await new Promise<void>(resolve => setImmediate(resolve));
+  assert.deepEqual(progress, ['我们请陆志鑫来开会。']);
 });
 
 test('short dictation stops after two minutes of recording and finishes normally', async t => {

@@ -23,7 +23,7 @@ test('legacy settings keep the shortcut, avatar, and overlay position', t => {
   assert.deepEqual(loadPreferences(file), {
     ...legacy, shortcuts: { dictation: 'F8', meeting: 'Ctrl+Alt+Shift+R' },
     recordingMode: 'dictation', writeTiming: 'sentence', dockOnEdge: true, languages: [...RECOGNITION_LANGUAGES],
-    meetingSources: ['microphone'],
+    meetingSources: ['microphone'], hotwords: [],
   });
 });
 
@@ -71,6 +71,14 @@ test('streaming write timing is saved and unrecognized values use sentence mode'
 
   writeFileSync(file, JSON.stringify({ ...preferences, writeTiming: 'unknown' }), 'utf8');
   assert.equal(loadPreferences(file).writeTiming, 'sentence');
+});
+
+test('hotword spellings and aliases persist alongside existing settings', t => {
+  const file = testSettings(t);
+  const hotwords = [{ text: 'OnoSan', aliases: ['欧诺桑', 'Ono San'] }, { text: '楼宇晨', aliases: [] }];
+  savePreferences(file, { ...loadPreferences(file), languages: ['zh', 'en'], hotwords });
+  assert.deepEqual(loadPreferences(file).hotwords, hotwords);
+  assert.deepEqual(loadPreferences(file).languages, ['zh', 'en']);
 });
 
 test('meeting mode and selected sources persist, and unknown or empty choices use safe defaults', t => {

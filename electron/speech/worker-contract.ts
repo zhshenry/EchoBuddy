@@ -1,3 +1,4 @@
+import type { Hotword } from '../../shared/hotwords';
 import type { MeetingRecognition } from '../../shared/meeting-contracts';
 import type { SpeakerLine } from '../../shared/speaker-contracts';
 import type { SpeechLanguage, SpeechResult } from '../../shared/speech-contracts';
@@ -16,7 +17,7 @@ export interface MeetingChunk {
 }
 
 export type SpeechOperation =
-  | { type: 'transcribe'; language: SpeechLanguage }
+  | { type: 'transcribe'; language: SpeechLanguage; hotwords: readonly Hotword[] }
   | { type: 'embedding'; meeting?: boolean }
   | { type: 'meeting'; language: SpeechLanguage }
   | { type: 'speakers'; voiceprint: number[] | null };

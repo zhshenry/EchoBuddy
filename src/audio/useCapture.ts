@@ -6,7 +6,7 @@ function joined(lines: string[]) {
   return lines.reduce((text, line) => text + (/[a-z\d.,!?]$/i.test(text) && /^[a-z\d]/i.test(line) ? ' ' : '') + line, '');
 }
 
-export function useCapture({ phase, sessionId, clearRevision }: DictationState, timing: WriteTiming) {
+export function useCapture({ phase, sessionId, clearRevision, hotwordsActive }: DictationState, timing: WriteTiming) {
   const running = useRef<{ id: string; capture: Capture; stopping: boolean } | undefined>(undefined);
   const [levels, setLevels] = useState<number[]>(Array(25).fill(0));
   const [lines, setLines] = useState<string[]>([]);
@@ -22,6 +22,7 @@ export function useCapture({ phase, sessionId, clearRevision }: DictationState, 
     }
     if (phase === 'preparing' && running.current?.id !== sessionId) {
       setLines([]); setDraft(''); setLevels(Array(25).fill(0));
+      // Later words can confirm the spelling before a phrase with hotwords is written.
       const capture = new Capture(sessionId, {
         level: value => setLevels(old => [...old.slice(1), value]),
         words: (confirmed, partial) => { setLines(confirmed); setDraft(partial); },
@@ -29,7 +30,7 @@ export function useCapture({ phase, sessionId, clearRevision }: DictationState, 
           void desktop.writeProgress(sessionId, joined(confirmed)).catch(() => {});
         } : undefined,
         ended: () => { if (!running.current?.stopping) void desktop.toggle(); },
-      });
+      }, !hotwordsActive);
       const current = { id: sessionId, capture, stopping: false };
       running.current = current;
       void capture.start().then(() => {
@@ -61,7 +62,7 @@ export function useCapture({ phase, sessionId, clearRevision }: DictationState, 
         })();
       } else if (!current) void desktop.complete(sessionId, '');
     }
-  }, [phase, sessionId, timing]);
+  }, [phase, sessionId, timing, hotwordsActive]);
 
   return { levels, lines, draft };
 }

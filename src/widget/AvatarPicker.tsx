@@ -8,9 +8,9 @@ export function AvatarPicker({ avatar }: { avatar: string }) {
   last.current[choice.kind] = choice.figure;
   const figures = choice.kind === 'character' ? botAvatarCharacters : botAvatarGraphics;
   const choose = (figure: string, color: string) => void window.echoBuddy.setAvatar(figure + ':' + color);
-  return <>
-    <div className="row shape-heading">
-      <strong>图标样式</strong>
+  return <section className="settings-section">
+    <div className="row settings-inline-row">
+      <h2>图标样式</h2>
       <div className="switch" role="group" aria-label="图标类别">
         <button aria-pressed={choice.kind === 'character'} onClick={() => choose(last.current.character, choice.color)}>角色</button>
         <button aria-pressed={choice.kind === 'graphic'} onClick={() => choose(last.current.graphic, choice.color)}>图形</button>
@@ -27,5 +27,5 @@ export function AvatarPicker({ avatar }: { avatar: string }) {
         aria-pressed={color.id === choice.color} style={{ '--swatch': color.base } as CSSProperties}
         onClick={() => choose(choice.figure, color.id)} />)}
     </div>
-  </>;
+  </section>;
 }

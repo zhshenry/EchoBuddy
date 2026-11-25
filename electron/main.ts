@@ -6,6 +6,7 @@ import { pathToFileURL } from 'node:url';
 import { autoUpdater } from 'electron-updater';
 import { isBotAvatar } from '../shared/bot-avatar';
 import { AVAILABLE_RECORDING_MODES, resolveSettingsPage, type LanguagePanelAnchor, type Preferences, type RecordingMode, type SettingsDestination, type SettingsPage, type WriteTiming } from '../shared/desktop';
+import { hotwordKey, normalizeHotword, supportsHotwords, type Hotword, type HotwordChange } from '../shared/hotwords';
 import { MEETING_SOURCES, type MeetingLibrary, type MeetingSource, type MeetingSpeaker } from '../shared/meeting-contracts';
 import type { SpeakerCapture, VoiceprintEnrollment, VoiceprintId } from '../shared/speaker-contracts';
 import { RECOGNITION_LANGUAGES, type RecognitionLanguage } from '../shared/speech-contracts';
@@ -22,6 +23,8 @@ import { SpeechEngine } from './speech/engine';
 import { SpeakerSession } from './speech/speaker-session';
 import { AppUpdates, releasesUrl } from './updater';
 import { WindowsInput } from './windows-input';
+import { registerFeedbackIpc } from './feedback-ipc';
+import { recordFeedbackEvent } from './feedback-service';
 
 const uiUrl = 'echobuddy://app/index.html';
 const settingsUrl = uiUrl + '?view=settings';
@@ -46,6 +49,13 @@ async function start() {
   function persist(): boolean {
     try { savePreferences(preferencesPath, saved); return true; }
     catch (error) { console.error('EchoBuddy preferences could not be saved', error); return false; }
+  }
+  function saveHotwords(hotwords: Hotword[]): HotwordChange {
+    const previous = saved.hotwords;
+    saved.hotwords = hotwords;
+    if (persist()) return { hotwords };
+    saved.hotwords = previous;
+    return { error: '无法保存热词，请重试。' };
   }
 
   protocol.handle('echobuddy', request => {
@@ -73,6 +83,7 @@ async function start() {
   });
   const { window } = overlay;
   let settingsWindow: BrowserWindow | undefined;
+  registerFeedbackIpc('echobuddy', () => settingsWindow?.webContents, settingsUrl);
   let languageWindow: BrowserWindow | undefined;
   let settingsDestination: SettingsDestination = { page: 'voice' };
   const say = (channel: string, value?: unknown) => {
@@ -292,7 +303,8 @@ async function start() {
       else meeting.start(saved.meetingSources, saved.languages.length === 1 ? saved.languages[0] : 'auto');
       return;
     }
-    dictation.toggle(shortcutActive.dictation ? saved.shortcuts.dictation : undefined, saved.writeTiming);
+    dictation.toggle(shortcutActive.dictation ? saved.shortcuts.dictation : undefined, saved.writeTiming,
+      supportsHotwords(saved.languages) ? saved.hotwords : []);
   }
   function finishShortcut(value?: string): string | null {
     const mode = editing;
@@ -337,7 +349,10 @@ async function start() {
   function handle<Args extends unknown[]>(channel: string, action: (...args: Args) => unknown, from: WindowScope = 'overlay') {
     ipcMain.handle(channel, (event: IpcMainInvokeEvent, ...args) => {
       authorizedWindow(event, from);
-      return action(...args as Args);
+      return Promise.resolve().then(() => action(...args as Args)).then(value => {
+        if (['dictation:toggle', 'dictation:complete', 'dictation:insert-pending', 'dictation:copy', 'meeting:stop', 'meeting:retry', 'meeting:delete', 'meeting:rename'].includes(channel)) recordFeedbackEvent({ stage: channel, status: 'completed' });
+        return value;
+      }, error => { recordFeedbackEvent({ stage: channel, status: 'failed', errorCode: 'OPERATION_FAILED' }); throw error; });
     });
   }
   handle('desktop:snapshot', () => ({
@@ -423,6 +438,20 @@ async function start() {
     publishLibrary();
     return profiles;
   }, 'settings');
+  handle('hotwords:list', () => saved.hotwords, 'settings');
+  handle('hotwords:save', (value: unknown, previous?: string): HotwordChange => {
+    const word = normalizeHotword(value);
+    if (!word) return { error: '请输入包含文字或数字的热词。' };
+    const index = saved.hotwords.findIndex(item => item.text === previous);
+    if (previous !== undefined && index < 0) return { error: '这条热词已更改，请重新打开语音设置。' };
+    const used = new Set(saved.hotwords.flatMap((item, i) => i === index ? [] : [item.text, ...item.aliases]).map(hotwordKey));
+    if ([word.text, ...word.aliases].some(text => used.has(hotwordKey(text)))) return { error: '这个词或误写已在其他热词中使用。' };
+    const hotwords = [...saved.hotwords];
+    if (index < 0) hotwords.push(word);
+    else hotwords[index] = word;
+    return saveHotwords(hotwords);
+  }, 'settings');
+  handle('hotwords:delete', (text: string) => saveHotwords(saved.hotwords.filter(word => word.text !== text)), 'settings');
   handle('preferences:recording-mode', (mode: RecordingMode) => {
     if (!AVAILABLE_RECORDING_MODES.includes(mode) || meeting.active || dictation.snapshot().phase !== 'idle' || mode === saved.recordingMode) return;
     saved.recordingMode = mode;
