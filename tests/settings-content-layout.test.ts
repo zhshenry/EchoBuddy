@@ -57,6 +57,23 @@ test('settings content rows and previews shrink or wrap instead of widening the 
   assert.match(rule('.settings-content .feedback-panel dd'), /overflow-wrap:\s*anywhere/);
 });
 
+test('feedback network capsules wrap inside the settings content width', () => {
+  const network = rule('.settings-content .feedback-network');
+  assert.match(network, /display:\s*flex/);
+  assert.match(network, /flex-wrap:\s*wrap/);
+  assert.match(network, /min-width:\s*0/);
+  assert.match(network, /max-width:\s*100%/);
+  const capsules = rule('.settings-content .feedback-capsules');
+  assert.match(capsules, /flex-wrap:\s*wrap/);
+  assert.match(capsules, /min-width:\s*0/);
+  assert.match(capsules, /max-width:\s*100%/);
+  assert.match(rule('.settings-content .feedback-capsule'), /max-width:\s*100%/);
+  const note = rule('.settings-content .feedback-network-note');
+  assert.match(note, /min-width:\s*0/);
+  assert.match(note, /max-width:\s*100%/);
+  assert.match(note, /overflow-wrap:\s*anywhere/);
+});
+
 test('narrow settings windows only tighten content padding', () => {
   const narrow = css.match(/@media \(max-width:\s*480px\)\s*\{(.*)\}\s*$/)?.[1] ?? '';
   assert.match(narrow, /\.settings-layout\s*\{[^}]*grid-template-columns:\s*120px minmax\(0,\s*1fr\)/);

@@ -38,6 +38,15 @@ export interface FeedbackBridge {
   copy(id: string): Promise<void>;
   copyWelink(id: string): Promise<{ record: FeedbackRecord; opened: boolean }>;
 }
+export type FeedbackCapsuleState = 'checking' | 'confirmed' | 'unconfirmed';
+
+/** Visible reachability for one probe. An in-progress check hides the previous conclusion. */
+export function feedbackCapsuleState(checking: boolean, failed: boolean, confirmed: boolean | undefined): FeedbackCapsuleState {
+  if (checking) return 'checking';
+  if (failed || typeof confirmed !== 'boolean') return 'unconfirmed';
+  return confirmed ? 'confirmed' : 'unconfirmed';
+}
+
 export function feedbackStatus(record: FeedbackRecord): string {
   if (record.status === 'local' && record.handoff) {
     if (record.handoff.state === 'sent') return '摘要已发送，反馈包待转交';
