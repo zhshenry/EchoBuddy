@@ -50,15 +50,15 @@ function unzip(data: Buffer, path: string): string[] {
   const out = join(path, 'unpacked');
   writeFileSync(zip, data);
   const result = spawnSync('python3', ['-c', `
-import pathlib, sys, zipfile
+import json, pathlib, sys, zipfile
 archive, folder = sys.argv[1:]
 with zipfile.ZipFile(archive) as package:
     assert package.testzip() is None, package.testzip()
     package.extractall(folder)
-    print('\\n'.join(package.namelist()))
+    print(json.dumps(package.namelist()))
 `, zip, out], { encoding: 'utf8' });
   assert.equal(result.status, 0, result.stderr);
-  return result.stdout.trim().split('\n');
+  return JSON.parse(result.stdout);
 }
 
 test('adding, pasting and deleting images keeps explicit limit errors', () => {
