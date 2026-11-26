@@ -1,6 +1,7 @@
-import { BrowserWindow, screen, systemPreferences, type Point } from 'electron';
+import { BrowserWindow, powerMonitor, screen, systemPreferences, type Point } from 'electron';
 import type { DockPlacement, OverlayDock, OverlayPointer } from '../shared/desktop';
 import type { SavedPreferences } from './preferences';
+import { bindOverlaySessionRefresh, createOverlayInputRefresh, type OverlayInputSignal, type OverlaySessionSignal } from './overlay-input-refresh';
 import { dockAfterDrag, dockBounds, dockWindowLayout, fitOverlay, overlayMinHeight as minHeight, overlayWidth as width } from './overlay-position';
 
 export function createOverlay(
@@ -23,7 +24,6 @@ export function createOverlay(
   let motion: number | undefined;
   let motionTimer: NodeJS.Timeout | undefined;
   let motionId = 0;
-  let needsRestoreRefresh = false;
   let restoreRefreshTask: NodeJS.Immediate | undefined;
 
   const window = new BrowserWindow({
@@ -158,30 +158,37 @@ export function createOverlay(
     clearTimeout(pointerTimer);
   }
   function refreshAfterRestore() {
-    if (!needsRestoreRefresh || restoreRefreshTask) return;
-    restoreRefreshTask = setImmediate(() => {
-      restoreRefreshTask = undefined;
-      if (window.isDestroyed() || window.isMinimized() || !window.isVisible()) return;
-      needsRestoreRefresh = false;
-      // showInactive can leave Chromium's mouse input child hidden on Windows.
-      const bounds = window.getBounds();
-      window.setBounds({ ...bounds, width: bounds.width + 1 });
-      window.setBounds(bounds);
-    });
+    if (window.isDestroyed()) return;
+    // showInactive can leave Chromium's mouse input child hidden on Windows.
+    // Restore the previous width before returning.
+    const bounds = window.getBounds();
+    window.setBounds({ ...bounds, width: bounds.width + 1 });
+    window.setBounds(bounds);
   }
+  const inputRefresh = process.platform === 'win32' ? createOverlayInputRefresh(
+    refreshAfterRestore,
+    run => {
+      restoreRefreshTask = setImmediate(() => {
+        restoreRefreshTask = undefined;
+        run();
+      });
+    },
+    () => !window.isDestroyed() && !window.isMinimized() && window.isVisible(),
+  ) : undefined;
+  const signalInput = (name: OverlayInputSignal) => inputRefresh?.signal(name);
   window.on('hide', pausePointerTracking);
   window.on('minimize', () => {
-    needsRestoreRefresh = process.platform === 'win32';
+    signalInput('minimize');
     pausePointerTracking();
   });
   window.on('show', () => {
     syncPointerTracking();
-    refreshAfterRestore();
+    signalInput('show');
   });
   window.on('restore', () => {
     applyShape();
     syncPointerTracking();
-    refreshAfterRestore();
+    signalInput('restore');
   });
   window.webContents.on('did-start-loading', () => {
     stopCompactDrag();
@@ -246,8 +253,44 @@ export function createOverlay(
   }
   screen.on('display-removed', displayChanged);
   screen.on('display-metrics-changed', displayChanged);
+  // Registered after the geometry listener so a display change settles the
+  // bounds before a waiting input refresh reads them. Each event is named
+  // literally because the Electron overloads do not accept the union.
+  function subscribeSession(signal: OverlaySessionSignal, listener: () => void, active: boolean) {
+    switch (signal) {
+      case 'display-metrics-changed':
+        if (active) screen.on(signal, listener);
+        else screen.off(signal, listener);
+        return;
+      case 'lock-screen':
+        if (active) powerMonitor.on(signal, listener);
+        else powerMonitor.off(signal, listener);
+        return;
+      case 'unlock-screen':
+        if (active) powerMonitor.on(signal, listener);
+        else powerMonitor.off(signal, listener);
+        return;
+      case 'suspend':
+        if (active) powerMonitor.on(signal, listener);
+        else powerMonitor.off(signal, listener);
+        return;
+      case 'resume':
+        if (active) powerMonitor.on(signal, listener);
+        else powerMonitor.off(signal, listener);
+        return;
+      default: {
+        const exhaustive: never = signal;
+        return exhaustive;
+      }
+    }
+  }
+  const stopSessionRefresh = inputRefresh ? bindOverlaySessionRefresh({
+    on: (signal, listener) => subscribeSession(signal, listener, true),
+    off: (signal, listener) => subscribeSession(signal, listener, false),
+  }, signal => inputRefresh.signal(signal)) : undefined;
   window.on('closed', () => {
     clearImmediate(restoreRefreshTask);
+    stopSessionRefresh?.();
     clearTimeout(pointerTimer);
     clearTimeout(motionTimer);
     clearInterval(compactDrag?.timer);
